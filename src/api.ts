@@ -111,6 +111,8 @@ function parseNewComment(input: unknown): NewComment {
     viewport: text(o, 'viewport', 20),
     pos_x: percent(o, 'pos_x'),
     pos_y: percent(o, 'pos_y'),
+    area_w: percent(o, 'area_w'),
+    area_h: percent(o, 'area_h'),
   }
 }
 

@@ -225,3 +225,13 @@ test('screenshot upload is validated at the boundary', async () => {
   assert.equal((await upload(r.id, JPEG)).status, 404, 'only on the thread, not on replies')
   assert.equal((await fetch(`${base}/__sp/api/comments/${r.id}/screenshot`, { headers: auth })).status, 404)
 })
+
+test('area comments: area_w/area_h accepted as percentages, validated like pos_x/pos_y', async () => {
+  const ok = await post({ url: '/p', author: 'A', body: 'vùng này', pos_x: 5, pos_y: 5, area_w: 40, area_h: 25 })
+  assert.equal(ok.status, 201)
+  const t = await ok.json()
+  assert.equal(t.area_w, 40)
+  assert.equal(t.area_h, 25)
+  assert.equal((await post({ url: '/p', author: 'A', body: 'x', area_w: 120 })).status, 400)
+  assert.equal((await post({ url: '/p', author: 'A', body: 'x', area_h: 'big' })).status, 400)
+})

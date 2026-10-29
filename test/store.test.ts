@@ -136,6 +136,33 @@ test('an existing DB from an older version gets the screenshot column, rows inta
   const s = openStore(file)
   assert.equal(s.get('old1')!.body, 'kept')
   assert.equal(s.get('old1')!.screenshot, null)
+  assert.equal(s.get('old1')!.area_w, null)
   s.saveScreenshot('old1', JPEG, 'image/jpeg')
   assert.equal(s.get('old1')!.screenshot, 'image/jpeg')
+})
+
+test('area comments: area_w/area_h stored; older DBs gain the columns', () => {
+  const s = fresh()
+  const t = s.create({ url: '/', author: 'A', body: 'khoảng trắng', pos_x: 10, pos_y: 20, area_w: 50, area_h: 30 })
+  assert.equal(s.get(t.id)!.area_w, 50)
+  assert.equal(s.get(t.id)!.area_h, 30)
+  assert.equal(s.create({ url: '/', author: 'A', body: 'element' }).area_w, null)
+})
+
+test('several processes opening (and migrating) the same old DB at once all succeed', async () => {
+  const { spawn } = await import('node:child_process')
+  const file = join(mkdtempSync(join(tmpdir(), 'sp-')), 'comments.db')
+  const old = new DatabaseSync(file)
+  old.exec(`CREATE TABLE comments (id TEXT PRIMARY KEY, parent_id TEXT, url TEXT NOT NULL, selector TEXT, text_snippet TEXT,
+    html_snippet TEXT, source_hint TEXT, pos_x REAL, pos_y REAL, viewport TEXT, author TEXT NOT NULL, body TEXT NOT NULL,
+    by_agent INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, resolved_at TEXT)`)
+  old.close()
+  const store = join(import.meta.dirname, '..', 'src', 'store.ts')
+  const runs = Array.from({ length: 6 }, () => {
+    const p = spawn(process.execPath, ['--input-type=module', '-e', `(await import(${JSON.stringify(store)})).openStore(${JSON.stringify(file)})`])
+    let err = ''
+    p.stderr.on('data', (d) => (err += d))
+    return new Promise<string>((r) => p.on('exit', (code) => r(code === 0 ? 'ok' : err.split('\n').find((l) => /Error/.test(l)) ?? `exit ${code}`)))
+  })
+  assert.deepEqual(await Promise.all(runs), Array(6).fill('ok'))
 })

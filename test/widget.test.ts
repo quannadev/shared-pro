@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { cssPath, describe, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
+import { areaRect, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -128,4 +128,31 @@ test('findAnchor: text compare ignores case/whitespace (innerText applies text-t
 test('findAnchor: ambiguous text and no selector match → null (no guessing)', () => {
   const doc = page(`<button>Lưu</button><button>Lưu</button>`)
   assert.equal(findAnchor(doc, thread('#gone', 'Lưu')), null)
+})
+
+const rect = (left: number, top: number, width: number, height: number) =>
+  ({ left, top, width, height, right: left + width, bottom: top + height }) as DOMRect
+
+test('area: anchored to the smallest ancestor that contains the whole dragged box', () => {
+  const doc = page(`<main><section><button id="a">A</button><button id="b">B</button></section></main>`)
+  const at = (sel: string, r: DOMRect) => ((doc.querySelector(sel)!.getBoundingClientRect = () => r), r)
+  at('main', rect(0, 0, 1000, 800))
+  at('section', rect(100, 100, 400, 100))
+  at('#a', rect(110, 110, 100, 40))
+  at('#b', rect(300, 110, 100, 40))
+  const box = rect(150, 105, 200, 50) // spans both buttons
+  const anchor = enclosing(doc.querySelector('#a')!, box)
+  assert.equal(anchor.localName, 'section')
+  const d = describeArea(anchor, box)
+  assert.deepEqual([d.pos_x, d.pos_y, d.area_w, d.area_h], [12.5, 5, 50, 50])
+  assert.equal(d.selector, 'body > main > section')
+  // and back: same box in viewport coords from the anchor's current rect
+  const back = areaRect(anchor.getBoundingClientRect(), d)
+  assert.deepEqual([back.left, back.top, back.width, back.height], [150, 105, 200, 50])
+})
+
+test('area: box bigger than everything → body', () => {
+  const doc = page(`<p>x</p>`)
+  doc.querySelector('p')!.getBoundingClientRect = () => rect(0, 0, 10, 10)
+  assert.equal(enclosing(doc.querySelector('p')!, rect(0, 0, 5000, 5000)).localName, 'body')
 })

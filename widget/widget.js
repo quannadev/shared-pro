@@ -8,7 +8,7 @@ const T = {
   title: 'Góp ý',
   add: '+ Thêm góp ý (C)',
   cancelPick: 'Hủy chọn (Esc)',
-  hint: 'Click vào phần tử muốn góp ý · Esc để thoát',
+  hint: 'Click vào phần tử, hoặc kéo chuột để khoanh vùng · Esc để thoát',
   open: 'Đang mở',
   resolved: 'Đã xong',
   emptyOpen: 'Chưa có góp ý nào trên trang này.',
@@ -74,6 +74,33 @@ export function describe(el, x, y) {
     pos_x: pct(x, r.left, r.width),
     pos_y: pct(y, r.top, r.height),
   }
+}
+
+const contains = (r, box) => r.left <= box.left && r.top <= box.top && r.right >= box.right && r.bottom >= box.bottom
+
+/** Area comments hang off the smallest element that contains the whole dragged box, so they move with the layout. */
+export function enclosing(start, box) {
+  const doc = start.ownerDocument
+  for (let el = start; el && el !== doc.body && el !== doc.documentElement; el = el.parentElement) {
+    if (contains(el.getBoundingClientRect(), box)) return el
+  }
+  return doc.body
+}
+
+/** Like describe(), plus the box size: top-left in pos_x/pos_y and size in area_w/area_h, all % of `el`. */
+export function describeArea(el, box) {
+  const r = el.getBoundingClientRect()
+  const pct = (v, size) => (size > 0 ? Math.round(Math.min(100, Math.max(0, (v / size) * 100)) * 10) / 10 : 0)
+  return { ...describe(el, box.left, box.top), area_w: pct(box.width, r.width), area_h: pct(box.height, r.height) }
+}
+
+/** Viewport rect of a stored area, from its anchor's current rect. */
+export function areaRect(r, t) {
+  const left = r.left + (r.width * t.pos_x) / 100
+  const top = r.top + (r.height * t.pos_y) / 100
+  const width = (r.width * t.area_w) / 100
+  const height = (r.height * t.area_h) / 100
+  return { left, top, width, height, right: left + width, bottom: top + height }
 }
 
 /** The page colour usually lives on <html> or <body>, which a DOM capture does not paint by itself (dark themes!). */
@@ -230,8 +257,11 @@ function mount() {
   const drafts = new Map() // thread id → unsent reply text, survives re-renders
   let lastJson = ''
   let hoverEl = null
+  let drag = null // { x0, y0, x, y, moved } while the mouse is held down in comment mode
+  let swallowClick = false // a drag ends with a click on some ancestor: that click must not open a 2nd composer
   let composer = null // { form, target }
   let flashEl = null
+  let flashThread = null
   let flashUntil = 0
   let pins = []
 
@@ -322,9 +352,9 @@ function mount() {
 
   // ---- screenshot ----
   /** JPEG of the reviewer's viewport with a red box on the clicked element, or null if capture fails. */
-  async function captureView(target) {
+  async function captureView(target, area) {
     try {
-      const box = target.getBoundingClientRect()
+      const box = rectFor(target, area)
       const { domToCanvas } = await import('/__sp/vendor/modern-screenshot.js')
       // ponytail: renders the DOM, not pixels: cross-origin images without CORS come out blank, and fixed
       // headers can be offset when the page is scrolled. Good enough to show the agent what was meant.
@@ -353,7 +383,7 @@ function mount() {
     state.picking = on
     hint.hidden = !on
     if (on) document.head.append(pickStyle)
-    else (pickStyle.remove(), (hoverEl = null))
+    else (pickStyle.remove(), (hoverEl = null), (drag = null))
     if (on) closeComposer()
     position()
     render()
@@ -366,6 +396,7 @@ function mount() {
     (e) => {
       if (!state.picking || isOurs(e)) return
       hoverEl = e.target instanceof Element ? e.target : null
+      if (drag) Object.assign(drag, { x: e.clientX, y: e.clientY, moved: drag.moved || Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 6 })
       position()
     },
     true,
@@ -378,6 +409,21 @@ function mount() {
         if (!state.picking || isOurs(e)) return
         e.preventDefault()
         e.stopImmediatePropagation()
+        if (type === 'pointerdown' && e.button === 0) {
+          drag = { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, moved: false }
+          swallowClick = false
+        }
+        if (type === 'pointerup' && drag?.moved) {
+          // Dragged a box: comment on that area, anchored to the smallest element containing it.
+          const box = dragBox()
+          const start = document.elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2).find((el) => el !== host)
+          const anchor = enclosing(start ?? document.body, box)
+          swallowClick = true
+          setPicking(false)
+          return openComposer(anchor, box.right, box.bottom, describeArea(anchor, box))
+        }
+        if (type === 'pointerup') drag = null
+        if (type === 'click' && swallowClick) return void (swallowClick = false)
         if (type === 'click' && e.target instanceof Element) {
           const target = e.target
           setPicking(false)
@@ -399,10 +445,11 @@ function mount() {
     true,
   )
 
-  function openComposer(target, x, y) {
+  function openComposer(target, x, y, areaInfo) {
     closeComposer()
-    const info = describe(target, x, y)
-    const shot = captureView(target) // starts now, so it shows exactly what was clicked; runs while they type
+    const info = areaInfo ?? describe(target, x, y)
+    const area = areaInfo ?? null
+    const shot = captureView(target, area) // starts now, so it shows exactly what was picked; runs while they type
     const name = nameField('name:new')
     const ta = h('textarea', { rows: 3, maxlength: 5000, placeholder: T.placeholder })
     const send = act(async () => {
@@ -425,7 +472,7 @@ function mount() {
     form.style.left = `${Math.max(8, Math.min(x + 12, innerWidth - 328))}px`
     form.style.top = `${Math.max(8, Math.min(y + 12, innerHeight - 200))}px`
     root.append(form)
-    composer = { form, target }
+    composer = { form, target, area }
     ;(name ?? ta).focus()
     position()
   }
@@ -459,14 +506,34 @@ function mount() {
         pin.style.transform = `translate(${r.left + (r.width * (t.pos_x ?? 0)) / 100}px, ${r.top + (r.height * (t.pos_y ?? 0)) / 100}px)`
       }
     }
-    const target = state.picking ? hoverEl : (composer?.target ?? (Date.now() < flashUntil ? flashEl : null))
-    const r = target?.isConnected ? target.getBoundingClientRect() : null
+    const live = (el) => el?.isConnected && el
+    const activeArea = state.open && state.threads.find((t) => t.id === state.active && t.area_w != null && t.url === state.url)
+    const r = state.picking
+      ? drag?.moved
+        ? dragBox()
+        : live(hoverEl)?.getBoundingClientRect()
+      : composer
+        ? live(composer.target) && rectFor(composer.target, composer.area)
+        : Date.now() < flashUntil && live(flashEl)
+          ? rectFor(flashEl, flashThread)
+          : activeArea && live(anchorOf(activeArea)) && rectFor(anchorOf(activeArea), activeArea) // area stays outlined while selected
     hl.hidden = !r
     if (r) Object.assign(hl.style, { transform: `translate(${r.left}px, ${r.top}px)`, width: `${r.width}px`, height: `${r.height}px` })
   }
 
-  function flash(el) {
+  // Element rect, or the stored area inside it for area comments.
+  const rectFor = (el, t) => (t?.area_w != null ? areaRect(el.getBoundingClientRect(), t) : el.getBoundingClientRect())
+  const dragBox = () => {
+    const left = Math.min(drag.x0, drag.x)
+    const top = Math.min(drag.y0, drag.y)
+    const width = Math.abs(drag.x - drag.x0)
+    const height = Math.abs(drag.y - drag.y0)
+    return { left, top, width, height, right: left + width, bottom: top + height }
+  }
+
+  function flash(el, t = null) {
     flashEl = el
+    flashThread = t
     flashUntil = Date.now() + 1600
     position()
     setTimeout(position, 1650)
@@ -484,7 +551,7 @@ function mount() {
     render()
     root.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
     const el = anchorOf(t)
-    if (el) (el.scrollIntoView({ block: 'center', behavior: 'smooth' }), flash(el))
+    if (el) (el.scrollIntoView({ block: 'center', behavior: 'smooth' }), flash(el, t))
   }
 
   function setScope(scope) {

@@ -144,3 +144,10 @@ test('get_comment attaches the screenshot as an image the agent can look at; lis
   assert.match(res.content[0].text!, /screenshot: attached/)
   assert.match((await call('list_comments')).text, /📷/)
 })
+
+test('get_comment explains an area comment to the agent', async () => {
+  const t = store.create({ url: '/p', author: 'A', body: 'khoảng cách', selector: 'main', pos_x: 10, pos_y: 20, area_w: 50, area_h: 30 })
+  const { text } = await call('get_comment', { id: t.id })
+  assert.match(text, /area: x 10%, y 20%, 50% wide, 30% tall of the element/)
+  assert.doesNotMatch(text, /clicked at/)
+})

@@ -40,9 +40,11 @@ function detail(t: Thread) {
     `created: ${t.created_at}${t.viewport ? ` · viewport ${neutral(t.viewport)}` : ''}`,
     `selector: ${neutral(t.selector) || '(none)'}`,
     `element text: ${neutral(t.text_snippet) || '(none)'}`,
-    t.pos_x != null && `clicked at: ${t.pos_x}% x ${t.pos_y}% of the element`,
+    t.area_w != null
+      ? `area: x ${t.pos_x}%, y ${t.pos_y}%, ${t.area_w}% wide, ${t.area_h}% tall of the element (the reviewer dragged a box, not a single element)`
+      : t.pos_x != null && `clicked at: ${t.pos_x}% x ${t.pos_y}% of the element`,
     t.source_hint && `source hint: ${neutral(t.source_hint)}`,
-    t.screenshot && 'screenshot: attached (the reviewer\'s viewport; the red box marks the element they clicked)',
+    t.screenshot && 'screenshot: attached (the reviewer\'s viewport; the red box marks what they picked: the element, or the area they dragged)',
     t.html_snippet && `element html:\n\`\`\`html\n${neutral(t.html_snippet)}\n\`\`\``,
     '',
     'comment:',
