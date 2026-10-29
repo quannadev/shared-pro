@@ -97,3 +97,35 @@ test('pageBackground: <html> colour, else <body>, else white (so dark pages are 
   doc.body.style.backgroundColor = ''
   assert.equal(pageBackground(doc), '#ffffff')
 })
+
+const thread = (selector: string | null, text_snippet: string | null) => ({ selector, text_snippet })
+
+test('findAnchor: selector still right → that element', () => {
+  const doc = page(`<ul><li>Một</li><li>Hai</li></ul>`)
+  assert.equal(findAnchor(doc, thread('body > ul > li:nth-of-type(2)', 'Hai'))?.textContent, 'Hai')
+})
+
+test('findAnchor: DOM shifted so the selector silently points at the wrong element → found by text', () => {
+  const doc = page(`<ul><li>Mới thêm</li><li>Một</li><li>Hai</li></ul>`) // "Hai" used to be li:nth-of-type(2)
+  assert.equal(findAnchor(doc, thread('body > ul > li:nth-of-type(2)', 'Hai'))?.textContent, 'Hai')
+})
+
+test('findAnchor: selector gone, unique text → innermost element with that text', () => {
+  const doc = page(`<section><div><button><span>Lưu thay đổi</span></button></div></section>`)
+  assert.equal(findAnchor(doc, thread('#old-id', 'Lưu thay đổi'))?.localName, 'span')
+})
+
+test('findAnchor: the fix changed the wording → keep the selector element', () => {
+  const doc = page(`<button id="save">Lưu lại</button>`)
+  assert.equal(findAnchor(doc, thread('#save', 'Lưu'))?.id, 'save')
+})
+
+test('findAnchor: text compare ignores case/whitespace (innerText applies text-transform)', () => {
+  const doc = page(`<p>x</p><h2>  Tiến   độ dự án </h2>`)
+  assert.equal(findAnchor(doc, thread('body > h1', 'TIẾN ĐỘ DỰ ÁN'))?.localName, 'h2')
+})
+
+test('findAnchor: ambiguous text and no selector match → null (no guessing)', () => {
+  const doc = page(`<button>Lưu</button><button>Lưu</button>`)
+  assert.equal(findAnchor(doc, thread('#gone', 'Lưu')), null)
+})

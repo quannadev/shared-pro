@@ -83,13 +83,28 @@ export function pageBackground(doc) {
   return [doc.documentElement, doc.body].map((el) => view.getComputedStyle(el).backgroundColor).find((c) => !isClear(c)) ?? '#ffffff'
 }
 
+const norm = (s) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+/**
+ * The element a thread is about. In order: the selector's element if its text still matches; else the one
+ * element whose text is exactly the stored snippet (the DOM shifted, so an nth-of-type selector now silently
+ * points at a neighbour); else the selector's element anyway (the fix itself changed the wording); else null.
+ * Text is compared case-insensitively: the snippet came from innerText, which applies text-transform.
+ */
 export function findAnchor(doc, thread) {
-  if (!thread.selector) return null
+  let bySelector = null
   try {
-    return doc.querySelector(thread.selector)
-  } catch {
-    return null
-  }
+    bySelector = thread.selector ? doc.querySelector(thread.selector) : null
+  } catch {}
+  const want = norm(thread.text_snippet)
+  if (!want) return bySelector
+  const textOf = (el) => norm(el.textContent).slice(0, 200)
+  if (bySelector && textOf(bySelector) === want) return bySelector
+  // Innermost matches only: a wrapper whose sole content is the button has the same text as the button.
+  const matches = [...doc.body.querySelectorAll('*')].filter(
+    (el) => textOf(el) === want && ![...el.children].some((c) => textOf(c) === want),
+  )
+  return matches.length === 1 ? matches[0] : bySelector
 }
 
 /** Comments are keyed by path + query (basePath kept, hash and share token dropped). */
@@ -421,6 +436,15 @@ function mount() {
     position()
   }
 
+  // findAnchor may scan the page (text fallback) and position() runs every frame while scrolling: cache per
+  // thread, dropped whenever the app's DOM changes. Our own UI lives in the shadow root, so it never triggers this.
+  const anchors = new Map()
+  new MutationObserver(() => anchors.clear()).observe(document.body, { subtree: true, childList: true, characterData: true })
+  const anchorOf = (t) => {
+    if (!anchors.has(t.id)) anchors.set(t.id, findAnchor(document, t))
+    return anchors.get(t.id)
+  }
+
   // ---- layout (cheap, runs on scroll/resize/tick) ----
   let raf = 0
   const schedule = () => raf || (raf = requestAnimationFrame(() => ((raf = 0), position())))
@@ -429,7 +453,7 @@ function mount() {
 
   function position() {
     for (const { pin, t } of pins) {
-      const r = findAnchor(document, t)?.getBoundingClientRect()
+      const r = anchorOf(t)?.getBoundingClientRect()
       pin.hidden = !r || r.width + r.height === 0
       if (!pin.hidden) {
         pin.style.transform = `translate(${r.left + (r.width * (t.pos_x ?? 0)) / 100}px, ${r.top + (r.height * (t.pos_y ?? 0)) / 100}px)`
@@ -459,7 +483,7 @@ function mount() {
     Object.assign(state, { open: true, active: id, filter: t.status })
     render()
     root.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
-    const el = findAnchor(document, t)
+    const el = anchorOf(t)
     if (el) (el.scrollIntoView({ block: 'center', behavior: 'smooth' }), flash(el))
   }
 
@@ -576,7 +600,7 @@ function mount() {
       h('p', { class: 'body' }, t.body),
       t.text_snippet && h('p', { class: 'snippet', title: t.text_snippet }, `“${t.text_snippet}”`),
       state.scope === 'all' && h('p', { class: 'page', title: t.url }, t.url === state.url ? `${t.url} · ${T.here}` : `${t.url} ↗`),
-      t.url === state.url && !findAnchor(document, t) && h('p', { class: 'warn' }, T.missing),
+      t.url === state.url && !anchorOf(t) && h('p', { class: 'warn' }, T.missing),
       t.screenshot &&
         h('a', { href: `${API}/${t.id}/screenshot`, target: '_blank', rel: 'noopener', class: 'shot' },
           h('img', { src: `${API}/${t.id}/screenshot`, alt: T.screenshot, loading: 'lazy' })),
