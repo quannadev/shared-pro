@@ -22,16 +22,13 @@ const sameSecret = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
-/** `?sp=TOKEN` on any page → cookie + redirect to the same URL without it. Returns true if handled. */
-export function handleShareLink(req: http.IncomingMessage, res: http.ServerResponse, token: string) {
-  const u = new URL(req.url!, 'http://x')
-  const given = u.searchParams.get('sp')
-  if (given === null) return false
-  u.searchParams.delete('sp')
-  const headers: http.OutgoingHttpHeaders = { location: u.pathname + u.search, 'cache-control': 'no-store' }
-  if (sameSecret(given, token)) headers['set-cookie'] = `sp_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
-  res.writeHead(302, headers).end()
-  return true
+/**
+ * `?sp=TOKEN` on any page → the cookie to attach to that page's response. No redirect and the param stays in
+ * the URL, so a copied URL or "Open in Safari" from an in-app browser still carries the token along.
+ */
+export function shareCookie(req: http.IncomingMessage, token: string): string | undefined {
+  const given = new URL(req.url!, 'http://x').searchParams.get('sp')
+  if (given !== null && sameSecret(given, token)) return `sp_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
 }
 
 function hasToken(req: http.IncomingMessage, token: string | undefined) {

@@ -15,7 +15,11 @@ const post = (body: unknown, headers: Record<string, string> = json) =>
   fetch(`${base}/__sp/api/comments`, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) })
 
 before(async () => {
-  upstream = http.createServer((req, res) => (upstreamHits.push(req.url!), res.end('app')))
+  upstream = http.createServer((req, res) => {
+    upstreamHits.push(req.url!)
+    if (req.url!.startsWith('/with-cookie')) res.setHeader('set-cookie', 'app_session=1; Path=/')
+    res.end('app')
+  })
   await new Promise<void>((r) => upstream.listen(0, r))
   proxy = createProxy({
     target: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
@@ -33,16 +37,35 @@ after(() => {
   upstream.closeAllConnections()
 })
 
-test('?sp=TOKEN sets an HttpOnly cookie and redirects without the param', async () => {
+// The share link stays in the address bar (no redirect): copying the URL or "Open in Safari" from an
+// in-app browser still carries the token into the next browser.
+test('?sp=TOKEN: no redirect, the app page is served with our cookie and the URL is forwarded unchanged', async () => {
+  upstreamHits.length = 0
   const res = await fetch(`${base}/qtw-project-manager/tasks?sp=${TOKEN}&tab=2`, { redirect: 'manual' })
-  assert.equal(res.status, 302)
-  assert.equal(res.headers.get('location'), '/qtw-project-manager/tasks?tab=2')
-  assert.match(res.headers.get('set-cookie')!, new RegExp(`^sp_token=${TOKEN};.*HttpOnly.*SameSite=Lax`))
+  assert.equal(res.status, 200)
+  assert.equal(await res.text(), 'app')
+  assert.match(res.headers.get('set-cookie')!, new RegExp(`^sp_token=${TOKEN};.*HttpOnly.*Secure.*SameSite=Lax`))
+  // unchanged, so server-rendered and client-side search params stay identical (no hydration mismatch)
+  assert.deepEqual(upstreamHits, [`/qtw-project-manager/tasks?sp=${TOKEN}&tab=2`])
 })
 
-test('wrong ?sp= token sets no cookie', async () => {
+test('?sp=TOKEN keeps the app’s own Set-Cookie headers next to ours', async () => {
+  const res = await fetch(`${base}/with-cookie?sp=${TOKEN}`)
+  const cookies = res.headers.getSetCookie()
+  assert.ok(cookies.some((c) => c.startsWith('app_session=1')), cookies.join(' | '))
+  assert.ok(cookies.some((c) => c.startsWith(`sp_token=${TOKEN}`)), cookies.join(' | '))
+})
+
+test('wrong ?sp= token: page still served, no cookie', async () => {
   const res = await fetch(`${base}/?sp=wrong`, { redirect: 'manual' })
+  assert.equal(res.status, 200)
   assert.equal(res.headers.get('set-cookie'), null)
+})
+
+test('cookie from the share link unlocks the API', async () => {
+  const res = await fetch(`${base}/x?sp=${TOKEN}`)
+  const cookie = res.headers.getSetCookie()[0].split(';')[0]
+  assert.equal((await fetch(`${base}/__sp/api/comments?url=/`, { headers: { cookie } })).status, 200)
 })
 
 test('API without the token cookie is 401, app itself still proxies', async () => {

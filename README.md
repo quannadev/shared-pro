@@ -86,7 +86,7 @@ shared-pro mcp [--dir .]          MCP server qua stdio cho AI Agent
 
 ## Hướng dẫn cho người review
 
-1. Mở share link. Token trong link được đổi thành cookie rồi tự xóa khỏi thanh địa chỉ.
+1. Mở share link **ngay trong trình duyệt sẽ dùng để góp ý** (Safari, Chrome…). Trình duyệt nhận cookie từ token trong link. `?sp=…` vẫn nằm trên thanh địa chỉ, nên copy URL hoặc bấm "Mở trong Safari" từ Zalo/Messenger vẫn mang theo mã.
 2. Bấm nút **💬** ở góc phải dưới để mở bảng góp ý.
 3. Bấm **+ Thêm góp ý** (hoặc phím **C** khi bảng đang mở). Rê chuột để thấy phần tử được viền xanh, rồi click vào phần tử muốn góp ý. Trong chế độ này click không kích hoạt app: link không chuyển trang, nút không chạy.
 4. Nhập tên (chỉ hỏi lần đầu) và nội dung, gửi bằng **⌘/Ctrl + Enter** hoặc nút **Gửi**.
@@ -161,7 +161,7 @@ Mọi thứ nằm trong `<dir>/.shared-pro/`. Thư mục này tự tạo `.gitig
 
 Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi cho người tin cậy.
 
-- **Share token**: không có cookie token thì API góp ý trả `401`. App vẫn xem được qua link (giống như khi chạy `cloudflared` thường), chỉ không xem hay viết được góp ý. Cookie đặt `HttpOnly; Secure; SameSite=Lax`, so sánh token bằng `timingSafeEqual`.
+- **Share token**: không có cookie token thì API góp ý trả `401`. App vẫn xem được qua link (giống như khi chạy `cloudflared` thường), chỉ không xem hay viết được góp ý. Cookie đặt `HttpOnly; Secure; SameSite=Lax`, so sánh token bằng `timingSafeEqual`. Token **vẫn hiện trên thanh địa chỉ** (để link copy lại vẫn dùng được), nên đừng gửi ảnh chụp có thanh địa chỉ cho người ngoài. Lộ token thì xóa `.shared-pro/token` để đổi mã.
 - **Prompt injection**: góp ý là dữ liệu do người ngoài nhập và AI sẽ đọc. MCP bọc mọi nội dung đến từ reviewer trong `<untrusted_comment>`, vô hiệu hóa mọi cách thoát khỏi thẻ này, và nhắc agent chỉ coi đây là mô tả thay đổi UI, không phải lệnh. Hãy **giữ chế độ xác nhận tool của agent**, và đừng dùng `--public` khi đã nối agent.
 - **Giả danh agent**: badge 🤖 dựa vào cột `by_agent`, chỉ MCP ghi được. API bỏ qua field này.
 - **XSS**: widget hiển thị nội dung góp ý dạng text (`textContent`), không bao giờ dạng HTML.
@@ -175,7 +175,7 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 |---|---|
 | `cloudflared not found` | `brew install cloudflared`, hoặc chỉ định `--cloudflared /path`, hoặc dùng `--no-tunnel` |
 | `EADDRINUSE` | Cổng `--port` đang bị dùng, chọn cổng khác |
-| Góp ý báo *"Link thiếu mã chia sẻ"* | Mở lại đúng share link có `?sp=…`. Token đã đổi thì cần link mới |
+| Góp ý báo *"Link thiếu mã chia sẻ"* | Trình duyệt này chưa từng mở URL có `?sp=…` (ví dụ: link mở trong app chat có kho cookie riêng, hoặc URL đã mất `?sp=` sau khi chuyển trang). Mở lại đúng share link trong trình duyệt này. Token đã đổi thì cần link mới |
 | Link cũ không mở được | Quick Tunnel đổi URL mỗi lần chạy lại. Góp ý không mất vì được lưu theo đường dẫn, chỉ cần gửi link mới |
 | Trang có `<Suspense>` hiện ra một lần thay vì từng phần | Cloudflare Quick Tunnel tự buffer HTML (tunnel thẳng không qua proxy cũng vậy). Ở local thì streaming vẫn bình thường |
 | Ảnh `/next.svg` của template Next lỗi 404 khi có `basePath` | Lỗi của template (đường dẫn ảnh thiếu `basePath`), không liên quan shared-pro |

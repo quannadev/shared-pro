@@ -1,7 +1,7 @@
 import http from 'node:http'
 import net from 'node:net'
 import { readFileSync } from 'node:fs'
-import { handleApi, handleShareLink, type Changes } from './api.ts'
+import { handleApi, shareCookie, type Changes } from './api.ts'
 import type { Store } from './store.ts'
 
 const SCRIPT = '<script type="module" src="/__sp/widget.js"></script>'
@@ -25,7 +25,7 @@ export function createProxy({ target, store, token }: { target: string; store: S
   const unwatch = store.watch(() => (changes.version++, changes.waiters.forEach((wake) => wake())))
 
   const server = http.createServer((req, res) => {
-    if (token && handleShareLink(req, res, token)) return
+    const cookie = token && shareCookie(req, token)
     if (req.url?.startsWith('/__sp/')) {
       if (req.url.startsWith('/__sp/api/')) return void handleApi(req, res, store, token, changes)
       if (req.url.startsWith('/__sp/widget.js')) {
@@ -44,6 +44,7 @@ export function createProxy({ target, store, token }: { target: string; store: S
       const inject =
         /text\/html/.test(out['content-type'] ?? '') && req.method !== 'HEAD' && upRes.statusCode !== 204 && upRes.statusCode !== 304
       if (inject) delete out['content-length']
+      if (cookie) out['set-cookie'] = [...(out['set-cookie'] ?? []), cookie] // keep the app's own cookies
       res.writeHead(upRes.statusCode ?? 502, out)
       upRes.pipe(res, { end: !inject })
       if (inject) upRes.on('end', () => res.end(SCRIPT))
