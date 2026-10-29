@@ -12,6 +12,10 @@ const T = {
   open: 'Đang mở',
   resolved: 'Đã xong',
   emptyOpen: 'Chưa có góp ý nào trên trang này.',
+  emptyOpenAll: 'Chưa có góp ý nào đang mở.',
+  thisPage: 'Trang này',
+  allPages: 'Tất cả trang',
+  here: 'trang hiện tại',
   emptyResolved: 'Chưa có góp ý nào được xử lý.',
   missing: '⚠ Không còn thấy phần tử này trên trang',
   name: 'Tên của bạn',
@@ -143,6 +147,8 @@ header strong { font-size: 15px; font-weight: 600; }
 .icon { border: none; font-size: 20px; line-height: 1; padding: 0 4px; background: none; }
 .toolbar { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #eaeef2; }
 .tabs { display: flex; gap: 4px; } .tabs button { flex: 1; }
+.page { color: #0969da; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs.scope button { padding: 2px 8px; font-size: 12px; }
 .tabs button.on { background: #eef2ff; border-color: #2563eb; color: #1d4ed8; }
 .list { flex: 1; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
 .card { border: 1px solid #d0d7de; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
@@ -172,20 +178,23 @@ p { margin: 0; } .body { white-space: pre-wrap; word-break: break-word; }
   padding: 10px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
 `
 
-const store = {
+// Storage can throw (privacy modes, sandboxed frames): treat failures as "nothing stored".
+const kv = (storage) => ({
   get: (k) => {
     try {
-      return localStorage.getItem(k) ?? ''
+      return storage().getItem(k) ?? ''
     } catch {
       return ''
     }
   },
   set: (k, v) => {
     try {
-      localStorage.setItem(k, v)
+      v ? storage().setItem(k, v) : storage().removeItem(k)
     } catch {}
   },
-}
+})
+const store = kv(() => localStorage)
+const session = kv(() => sessionStorage) // survives the navigation to another page of the app
 
 function mount() {
   if (window.__SP_MOUNTED) return
@@ -195,6 +204,7 @@ function mount() {
     url: pageKey(location),
     threads: [],
     filter: 'open',
+    scope: session.get('sp_scope') || 'page', // 'page' | 'all'
     open: false,
     picking: false,
     active: null,
@@ -248,7 +258,7 @@ function mount() {
     lastLoad = Date.now()
     let threads
     try {
-      ;({ threads } = await api(`?url=${encodeURIComponent(url)}`))
+      ;({ threads } = await api(state.scope === 'page' ? `?url=${encodeURIComponent(url)}` : ''))
     } catch (e) {
       // Only network/API errors land here; a render bug must stay a loud uncaught error, not a banner.
       if (mine === seq && state.error !== e.message) ((state.error = e.message), render())
@@ -441,6 +451,11 @@ function mount() {
   function focusThread(id) {
     const t = state.threads.find((x) => x.id === id)
     if (!t) return
+    if (t.url !== state.url) {
+      // Another page of the app: go there, then reopen the panel on this thread (see the end of mount()).
+      session.set('sp_focus', id)
+      return location.assign(t.url)
+    }
     Object.assign(state, { open: true, active: id, filter: t.status })
     render()
     root.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -448,18 +463,28 @@ function mount() {
     if (el) (el.scrollIntoView({ block: 'center', behavior: 'smooth' }), flash(el))
   }
 
+  function setScope(scope) {
+    state.scope = scope
+    session.set('sp_scope', scope)
+    lastJson = ''
+    state.threads = []
+    render()
+    load()
+  }
+
   // ---- render ----
   function render() {
     const open = state.threads.filter((t) => t.status === 'open')
     const resolved = state.threads.filter((t) => t.status === 'resolved')
+    const openHere = open.filter((t) => t.url === state.url) // pins and the fab count are about this page only
 
     // While picking, the panel steps aside so every element is clickable; the fab becomes "cancel".
     fab.hidden = state.open && !state.picking
     fab.title = state.picking ? T.cancelPick : T.title
     fab.classList.toggle('picking', state.picking)
-    fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', open.length > 0 && h('span', { class: 'count' }, open.length))))
+    fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))))
 
-    pins = open.map((t, i) => ({
+    pins = openHere.map((t, i) => ({
       t,
       pin: h(
         'button',
@@ -481,11 +506,15 @@ function mount() {
 
     const tab = (f, label) =>
       h('button', { class: state.filter === f ? 'on' : '', onclick: () => ((state.filter = f), render()) }, label)
+    const scopeTab = (scope, label) =>
+      h('button', { class: state.scope === scope ? 'on' : '', onclick: () => setScope(scope) }, label)
     const shown = state.filter === 'open' ? open : resolved
     const list = h(
       'div',
       { class: 'list' },
-      shown.length ? shown.map((t) => card(t, open.indexOf(t))) : h('p', { class: 'empty' }, state.filter === 'open' ? T.emptyOpen : T.emptyResolved),
+      shown.length
+        ? shown.map((t) => card(t, open.filter((x) => x.url === t.url).indexOf(t))) // numbers match the pins of t's page
+        : h('p', { class: 'empty' }, state.filter === 'open' ? (state.scope === 'page' ? T.emptyOpen : T.emptyOpenAll) : T.emptyResolved),
     )
     panel.replaceChildren(
       ...nodes(
@@ -499,6 +528,7 @@ function mount() {
         'div',
         { class: 'toolbar' },
         h('button', { class: 'primary', onclick: () => setPicking(!state.picking) }, state.picking ? T.cancelPick : T.add),
+        h('div', { class: 'tabs scope' }, scopeTab('page', T.thisPage), scopeTab('all', T.allPages)),
         h('div', { class: 'tabs' }, tab('open', `${T.open} (${open.length})`), tab('resolved', `${T.resolved} (${resolved.length})`)),
       ),
       state.error && h('div', { class: 'error' }, state.error),
@@ -545,7 +575,8 @@ function mount() {
       ),
       h('p', { class: 'body' }, t.body),
       t.text_snippet && h('p', { class: 'snippet', title: t.text_snippet }, `“${t.text_snippet}”`),
-      !findAnchor(document, t) && h('p', { class: 'warn' }, T.missing),
+      state.scope === 'all' && h('p', { class: 'page', title: t.url }, t.url === state.url ? `${t.url} · ${T.here}` : `${t.url} ↗`),
+      t.url === state.url && !findAnchor(document, t) && h('p', { class: 'warn' }, T.missing),
       t.screenshot &&
         h('a', { href: `${API}/${t.id}/screenshot`, target: '_blank', rel: 'noopener', class: 'shot' },
           h('img', { src: `${API}/${t.id}/screenshot`, alt: T.screenshot, loading: 'lazy' })),
@@ -612,7 +643,10 @@ function mount() {
   document.addEventListener('visibilitychange', () => document.hidden || load())
 
   render()
-  load()
+  load().then(() => {
+    const id = session.get('sp_focus')
+    if (id) (session.set('sp_focus', ''), focusThread(id))
+  })
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') mount()
