@@ -166,3 +166,23 @@ test('several processes opening (and migrating) the same old DB at once all succ
   })
   assert.deepEqual(await Promise.all(runs), Array(6).fill('ok'))
 })
+
+test('remove: a thread takes its replies and screenshot with it; a reply goes alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sp-'))
+  const s = openStore(join(dir, 'comments.db'))
+  const t = s.create({ url: '/', author: 'A', body: 'thread', owner: 'h1' })
+  const r1 = s.create({ parent_id: t.id, author: 'B', body: 'r1', owner: 'h2' })
+  s.create({ parent_id: t.id, author: 'C', body: 'r2' })
+  s.saveScreenshot(t.id, JPEG, 'image/jpeg')
+  assert.equal(s.owner(t.id), 'h1')
+  assert.equal(s.owner(r1.id), 'h2')
+
+  s.remove(r1.id)
+  assert.deepEqual(s.get(t.id)!.replies.map((r) => r.body), ['r2'])
+
+  s.remove(t.id)
+  assert.equal(s.get(t.id), undefined)
+  assert.equal(s.list({}).length, 0)
+  assert.equal(existsSync(join(dir, 'shots', `${t.id}.jpg`)), false)
+  assert.equal(s.owner('missing'), undefined)
+})

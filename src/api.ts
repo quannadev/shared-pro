@@ -1,6 +1,6 @@
 import type http from 'node:http'
-import { timingSafeEqual } from 'node:crypto'
-import type { NewComment, ShotType, Status, Store } from './store.ts'
+import { createHash, timingSafeEqual } from 'node:crypto'
+import type { Comment, NewComment, ShotType, Status, Store, Thread } from './store.ts'
 
 const MAX_BODY = 64 * 1024
 const STATUSES: Status[] = ['open', 'resolved']
@@ -117,6 +117,20 @@ function parseNewComment(input: unknown): NewComment {
 }
 
 /**
+ * Who wrote what, without accounts: the widget sends a random per-browser key (x-sp-client). Only its sha256 is
+ * stored, and responses carry `mine` instead of the hash, so nobody can read another browser's key.
+ */
+function clientKey(req: http.IncomingMessage): string | null {
+  const key = req.headers['x-sp-client']
+  return typeof key === 'string' && /^[a-f0-9]{32}$/.test(key) ? createHash('sha256').update(key).digest('hex') : null
+}
+const view = (c: Comment, key: string | null) => {
+  const { owner, ...rest } = c
+  return { ...rest, mine: key !== null && owner === key }
+}
+const viewThread = (t: Thread, key: string | null) => ({ ...view(t, key), replies: t.replies.map((r) => view(r, key)) })
+
+/**
  * Long-poll hub. `version` bumps on every store write; held /changes requests are answered on the next bump.
  * Not SSE: Cloudflare Quick Tunnels buffer SSE (documented limitation), but short plain responses pass straight through.
  */
@@ -161,29 +175,42 @@ export async function handleApi(
         return res.end(img.data)
       }
       if (req.method === 'POST') {
-        // First upload wins (the widget sends it right after creating the thread): nobody can swap it later.
+        // The thread's author, once (the widget sends it right after creating the thread): nobody can swap it later.
+        const owner = store.owner(threadId)
+        if (owner && owner !== clientKey(req)) throw new HttpError(403, 'only the author of this thread can attach its screenshot')
         if (store.get(threadId)!.screenshot) throw new HttpError(409, 'thread already has a screenshot')
         const { data, type } = await readScreenshot(req)
         store.saveScreenshot(threadId, data, type)
         return send(201, { ok: true })
       }
     }
+    const key = clientKey(req)
     const m = /^\/__sp\/api\/comments(?:\/([^/]+))?$/.exec(u.pathname)
     const id = m?.[1] && decodeURIComponent(m[1])
 
     if (m && !id && req.method === 'GET') {
       const status = u.searchParams.get('status') ?? undefined
       if (status && !STATUSES.includes(status as Status)) bad('status must be open or resolved')
-      return send(200, { threads: store.list({ url: u.searchParams.get('url') ?? undefined, status: status as Status }) })
+      const threads = store.list({ url: u.searchParams.get('url') ?? undefined, status: status as Status })
+      return send(200, { threads: threads.map((t) => viewThread(t, key)) })
     }
-    if (m && !id && req.method === 'POST') return send(201, store.create(parseNewComment(await readJson(req))))
+    if (m && !id && req.method === 'POST') return send(201, view(store.create({ ...parseNewComment(await readJson(req)), owner: key }), key))
     if (id && req.method === 'PATCH') {
       const { status } = ((await readJson(req)) ?? {}) as { status?: unknown }
       if (!STATUSES.includes(status as Status)) bad('status must be open or resolved')
       // Resolving means "fixed", and only the AI agent (MCP resolve_comment) says that. People can only reopen.
       if (status === 'resolved') throw new HttpError(403, 'only the AI agent can resolve a thread (via MCP resolve_comment)')
       const thread = store.setStatus(id, status as Status)
-      return thread ? send(200, thread) : send(404, { error: 'thread not found' })
+      return thread ? send(200, viewThread(thread, key)) : send(404, { error: 'thread not found' })
+    }
+    if (id && req.method === 'DELETE') {
+      const owner = store.owner(id)
+      if (owner === undefined) throw new HttpError(404, 'comment not found')
+      // Only the browser that wrote it; comments without an owner (older ones, the AI agent's) stay.
+      if (!key || owner !== key) throw new HttpError(403, 'you can only delete comments you wrote in this browser')
+      store.remove(id)
+      res.writeHead(204, { 'cache-control': 'no-store' })
+      return res.end()
     }
     throw new HttpError(404, 'not found')
   } catch (e) {

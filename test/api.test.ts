@@ -235,3 +235,57 @@ test('area comments: area_w/area_h accepted as percentages, validated like pos_x
   assert.equal((await post({ url: '/p', author: 'A', body: 'x', area_w: 120 })).status, 400)
   assert.equal((await post({ url: '/p', author: 'A', body: 'x', area_h: 'big' })).status, 400)
 })
+
+// Delete: no accounts, so ownership is a random per-browser key (x-sp-client). Only its hash is stored.
+const me = '0123456789abcdef0123456789abcdef'
+const other = 'fedcba9876543210fedcba9876543210'
+const as = (client: string) => ({ ...json, 'x-sp-client': client })
+const del = (id: string, client?: string) =>
+  fetch(`${base}/__sp/api/comments/${id}`, { method: 'DELETE', headers: client ? as(client) : auth })
+
+test('delete: only the browser that wrote a comment can delete it; others get 403', async () => {
+  const t = await (await post({ url: '/del', author: 'A', body: 'của tôi' }, as(me))).json()
+  assert.equal(t.mine, true)
+  assert.equal(t.owner, undefined, 'owner hash never leaves the server')
+
+  assert.equal((await del(t.id, other)).status, 403)
+  assert.equal((await del(t.id)).status, 403, 'no key, no delete')
+  assert.ok(store.get(t.id))
+
+  assert.equal((await del(t.id, me)).status, 204)
+  assert.equal(store.get(t.id), undefined)
+  assert.equal((await del(t.id, me)).status, 404)
+})
+
+test('delete: own reply only; agent replies (no owner) cannot be deleted from the browser', async () => {
+  const t = await (await post({ url: '/del', author: 'A', body: 'thread' }, as(other))).json()
+  const mine = await (await post({ parent_id: t.id, author: 'B', body: 'reply của tôi' }, as(me))).json()
+  const agent = store.create({ parent_id: t.id, author: 'AI Agent', body: 'fixed', by_agent: true })
+
+  assert.equal((await del(mine.id, me)).status, 204)
+  assert.equal((await del(agent.id, me)).status, 403)
+  assert.deepEqual(store.get(t.id)!.replies.map((r) => r.body), ['fixed'])
+})
+
+test('list marks `mine` per caller and never exposes owner hashes', async () => {
+  const t = await (await post({ url: '/mine', author: 'A', body: 'x' }, as(me))).json()
+  await post({ parent_id: t.id, author: 'B', body: 'y' }, as(other))
+  const view = async (client: string) => (await (await fetch(`${base}/__sp/api/comments?url=/mine`, { headers: as(client) })).json()).threads[0]
+  const mineView = await view(me)
+  assert.equal(mineView.mine, true)
+  assert.equal(mineView.replies[0].mine, false)
+  assert.equal((await view(other)).replies[0].mine, true)
+  assert.doesNotMatch(JSON.stringify(mineView), /"owner"/)
+})
+
+test('a malformed x-sp-client is ignored (comment has no owner)', async () => {
+  const t = await (await post({ url: '/mine', author: 'A', body: 'x' }, as('not-a-key'))).json()
+  assert.equal(t.mine, false)
+  assert.equal(store.owner(t.id), null)
+})
+
+test('screenshot upload: only the thread author’s browser may attach it', async () => {
+  const t = await (await post({ url: '/del', author: 'A', body: 'x' }, as(me))).json()
+  assert.equal((await upload(t.id, JPEG, 'image/jpeg', as(other))).status, 403)
+  assert.equal((await upload(t.id, JPEG, 'image/jpeg', as(me))).status, 201)
+})

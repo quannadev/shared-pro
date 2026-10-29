@@ -1,5 +1,5 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -25,12 +25,13 @@ export type Comment = {
   created_at: string
   resolved_at: string | null
   screenshot: ShotType | null // set when the reviewer's browser uploaded a screenshot of what they saw
+  owner: string | null // sha256 of the author's per-browser key; only that browser may delete. Never sent to clients
 }
 export type ShotType = 'image/jpeg' | 'image/png'
 export type Thread = Comment & { replies: Comment[] }
 export type NewComment = Partial<
   Pick<Comment, 'parent_id' | 'url' | 'selector' | 'text_snippet' | 'html_snippet' | 'source_hint' | 'pos_x' | 'pos_y' | 'area_w' | 'area_h' | 'viewport'>
-> & { author: string; body: string; by_agent?: boolean }
+> & { author: string; body: string; by_agent?: boolean; owner?: string | null }
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS comments (
@@ -45,7 +46,8 @@ CREATE TABLE IF NOT EXISTS comments (
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
   created_at TEXT NOT NULL,
   resolved_at TEXT,
-  screenshot TEXT
+  screenshot TEXT,
+  owner TEXT
 );
 CREATE INDEX IF NOT EXISTS comments_url ON comments(url);
 CREATE INDEX IF NOT EXISTS comments_parent ON comments(parent_id);`
@@ -61,7 +63,7 @@ export function openStore(file: string) {
   db.exec('BEGIN IMMEDIATE')
   try {
     const columns = (db.prepare('PRAGMA table_info(comments)').all() as { name: string }[]).map((c) => c.name)
-    for (const [name, type] of [['screenshot', 'TEXT'], ['area_w', 'REAL'], ['area_h', 'REAL']]) {
+    for (const [name, type] of [['screenshot', 'TEXT'], ['area_w', 'REAL'], ['area_h', 'REAL'], ['owner', 'TEXT']]) {
       if (!columns.includes(name)) db.exec(`ALTER TABLE comments ADD COLUMN ${name} ${type}`)
     }
     db.exec('COMMIT')
@@ -93,12 +95,12 @@ export function openStore(file: string) {
       if (!url) throw new RangeError('url is required for a new thread')
       const id = randomUUID()
       db.prepare(
-        `INSERT INTO comments (id, parent_id, url, selector, text_snippet, html_snippet, source_hint, pos_x, pos_y, area_w, area_h, viewport, author, body, by_agent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO comments (id, parent_id, url, selector, text_snippet, html_snippet, source_hint, pos_x, pos_y, area_w, area_h, viewport, author, body, by_agent, owner, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         ...([
           id, c.parent_id ?? null, url, c.selector ?? null, c.text_snippet ?? null, c.html_snippet ?? null, c.source_hint ?? null,
-          c.pos_x ?? null, c.pos_y ?? null, c.area_w ?? null, c.area_h ?? null, c.viewport ?? null, c.author, c.body, c.by_agent ? 1 : 0, new Date().toISOString(),
+          c.pos_x ?? null, c.pos_y ?? null, c.area_w ?? null, c.area_h ?? null, c.viewport ?? null, c.author, c.body, c.by_agent ? 1 : 0, c.owner ?? null, new Date().toISOString(),
         ] satisfies SQLInputValue[]),
       )
       changed()
@@ -146,6 +148,23 @@ export function openStore(file: string) {
       } catch {
         return undefined // file deleted by hand: treat as no screenshot
       }
+    },
+
+    /** Owner hash of a comment or reply; undefined if it does not exist, null if it has no owner. */
+    owner(id: string): string | null | undefined {
+      return row(id)?.owner
+    },
+
+    /** Deletes a reply, or a thread with all its replies and its screenshot file. */
+    remove(id: string) {
+      const c = row(id)
+      if (!c) return
+      if (!c.parent_id) {
+        db.prepare('DELETE FROM comments WHERE parent_id = ?').run(id) // replies first (foreign key)
+        if (c.screenshot) rmSync(shotFile(id, c.screenshot), { force: true })
+      }
+      db.prepare('DELETE FROM comments WHERE id = ?').run(id)
+      changed()
     },
 
     /** Calls `cb` after any write, ours or another process's. Returns an unsubscribe function. */

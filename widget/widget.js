@@ -26,6 +26,9 @@ const T = {
   cancel: 'Hủy',
   reply: 'Trả lời',
   reopen: 'Mở lại',
+  delete: 'Xóa',
+  confirmDelete: 'Xóa góp ý này? Các trả lời và ảnh chụp đi kèm cũng bị xóa.',
+  confirmDeleteReply: 'Xóa trả lời này?',
   screenshot: 'Ảnh chụp màn hình lúc góp ý',
   close: 'Đóng',
   noToken: 'Link thiếu mã chia sẻ. Hãy mở lại đúng link được gửi cho bạn (có ?sp=…).',
@@ -207,6 +210,8 @@ p { margin: 0; } .body { white-space: pre-wrap; word-break: break-word; }
 .reply { border-left: 3px solid #eaeef2; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .reply.agent { border-left-color: #8250df; }
 .replybox { display: flex; flex-direction: column; gap: 6px; cursor: default; }
+.danger { color: #cf222e; } .danger:hover { background: #fff1f0; }
+.link { border: none; background: none; padding: 0 2px; font-size: 12px; }
 .row { display: flex; justify-content: flex-end; gap: 6px; }
 .error { margin: 10px 14px 0; padding: 8px; background: #fff1f0; color: #cf222e; border-radius: 6px; }
 .empty { color: #6e7781; text-align: center; margin-top: 40px; }
@@ -285,10 +290,18 @@ function mount() {
   pickStyle.textContent = '* { cursor: crosshair !important; }'
 
   // ---- data ----
+  // Random per-browser key: the server keeps only its hash and lets this browser delete what it wrote.
+  if (!/^[a-f0-9]{32}$/.test(store.get('sp_client'))) {
+    store.set('sp_client', [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join(''))
+  }
+  const client = { 'x-sp-client': store.get('sp_client') }
+
   async function api(path, init) {
     const res = await fetch(
       API + path,
-      init && { method: init.method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(init.body) },
+      init
+        ? { method: init.method, headers: { ...client, 'content-type': 'application/json' }, body: JSON.stringify(init.body) }
+        : { headers: client },
     )
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(res.status === 401 ? T.noToken : data.error || `HTTP ${res.status}`)
@@ -459,7 +472,7 @@ function mount() {
       closeComposer()
       Object.assign(state, { open: true, filter: 'open', active: t.id })
       // Best effort: the comment is already saved; a failed capture/upload only means no picture.
-      shot.then((blob) => blob && fetch(`${API}/${t.id}/screenshot`, { method: 'POST', headers: { 'content-type': blob.type }, body: blob }))
+      shot.then((blob) => blob && fetch(`${API}/${t.id}/screenshot`, { method: 'POST', headers: { ...client, 'content-type': blob.type }, body: blob }))
     })
     ta.addEventListener('keydown', submitOnCmdEnter(send))
     const form = h(
@@ -631,6 +644,12 @@ function mount() {
     if (again) (again.focus(), again.setSelectionRange?.(caret[0], caret[1]))
   }
 
+  // Only shown on your own comments (server says `mine`); the API enforces it too.
+  const remove = (id, question) => (e) => {
+    e.stopPropagation()
+    if (confirm(question)) act(() => api(`/${id}`, { method: 'DELETE' }))()
+  }
+
   function card(t, index) {
     const nameInput = nameField(`name:${t.id}`)
     const ta = h('textarea', {
@@ -675,7 +694,14 @@ function mount() {
         h(
           'div',
           { class: `reply${r.by_agent ? ' agent' : ''}` },
-          h('div', { class: 'meta' }, r.by_agent ? '🤖' : null, h('b', {}, r.author), h('time', { datetime: r.created_at }, ago(r.created_at))),
+          h(
+            'div',
+            { class: 'meta' },
+            r.by_agent ? '🤖' : null,
+            h('b', {}, r.author),
+            h('time', { datetime: r.created_at }, ago(r.created_at)),
+            r.mine && h('button', { class: 'link danger', title: T.delete, onclick: remove(r.id, T.confirmDeleteReply) }, T.delete),
+          ),
           h('p', { class: 'body' }, r.body),
         ),
       ),
@@ -687,6 +713,7 @@ function mount() {
         h(
           'div',
           { class: 'row' },
+          t.mine && h('button', { class: 'danger', onclick: remove(t.id, T.confirmDelete) }, T.delete),
           t.status === 'resolved' && h('button', { onclick: reopen }, T.reopen),
           h('button', { class: 'primary', onclick: send }, T.reply),
         ),

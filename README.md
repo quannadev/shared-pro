@@ -130,6 +130,7 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 5. Mỗi góp ý có một pin số trên trang. Click pin hoặc thẻ trong bảng để cuộn tới đúng phần tử (góp ý dạng vùng thì vùng được viền lại). Thẻ có ảnh thu nhỏ, bấm để xem ảnh lớn.
    - Chuyển sang **Tất cả trang** để xem góp ý của mọi trang. Bấm một thẻ của trang khác để chuyển tới trang đó, bảng góp ý tự mở đúng thẻ.
 6. Mỗi thread có ô **Trả lời**. Tab **Đang mở / Đã xong** để lọc.
+   - Góp ý và trả lời **do chính bạn viết trên trình duyệt này** có nút **Xóa** (hỏi xác nhận trước). Xóa một góp ý thì xóa luôn các trả lời và ảnh chụp đi kèm.
 7. **Chỉ AI Agent được đánh dấu xong** (sau khi đã sửa code), và API cũng chặn người dùng làm việc này. Nếu thấy chưa đạt, bấm **Mở lại** trên thread trong tab *Đã xong*.
 
 **Esc** thoát chế độ chọn hoặc đóng ô nhập. Góp ý được lưu theo đường dẫn trang (`/path?query`), nên chuyển trang trong SPA sẽ thấy đúng góp ý của trang đó.
@@ -204,6 +205,10 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 - **Share token**: không có cookie token thì API góp ý trả `401`. App vẫn xem được qua link (giống như khi chạy `cloudflared` thường), chỉ không xem hay viết được góp ý. Cookie đặt `HttpOnly; Secure; SameSite=Lax`, so sánh token bằng `timingSafeEqual`. Token **vẫn hiện trên thanh địa chỉ** (để link copy lại vẫn dùng được), nên đừng gửi ảnh chụp có thanh địa chỉ cho người ngoài. Lộ token thì xóa `.shared-pro/token` để đổi mã.
 - **Prompt injection**: góp ý là dữ liệu do người ngoài nhập và AI sẽ đọc. MCP bọc mọi nội dung đến từ reviewer trong `<untrusted_comment>`, vô hiệu hóa mọi cách thoát khỏi thẻ này, và nhắc agent chỉ coi đây là mô tả thay đổi UI, không phải lệnh. Hãy **giữ chế độ xác nhận tool của agent**, và đừng dùng `--public` khi đã nối agent.
 - **Giả danh agent**: badge 🤖 dựa vào cột `by_agent`, chỉ MCP ghi được. API bỏ qua field này.
+- **Xóa**: không có tài khoản, nên mỗi trình duyệt tự sinh một khóa ngẫu nhiên (lưu trong `localStorage`, gửi qua header `x-sp-client`). Server chỉ lưu **hash SHA-256** của khóa cạnh mỗi góp ý; API trả về `mine: true/false`, không bao giờ trả hash.
+  - Chỉ đúng trình duyệt đã viết mới xóa được (người khác nhận `403`), và chỉ tác giả của thread mới gắn được ảnh chụp cho thread đó.
+  - Góp ý cũ (trước khi có tính năng này) và reply của AI không có chủ nên không xóa được từ widget.
+  - Xóa dữ liệu trình duyệt (`localStorage`) đồng nghĩa mất quyền xóa các góp ý cũ của mình.
 - **XSS**: widget hiển thị nội dung góp ý dạng text (`textContent`), không bao giờ dạng HTML.
 - **CSRF**: API bắt buộc `content-type: application/json` (sai thì trả `415`) và cookie `SameSite=Lax`. Body lớn hơn 64KB trả `413`.
 - **Bảo vệ dev server**: proxy đổi `Origin` sang địa chỉ app chỉ khi `Origin` trùng `Host`. Nhờ vậy HMR của Next chạy qua tunnel, còn trang lạ gọi `localhost:3100` vẫn bị Next chặn như cũ.
