@@ -7,3 +7,4 @@ node_modules/
 .claude-flow/
 spike/
 .DS_Store
+dist/

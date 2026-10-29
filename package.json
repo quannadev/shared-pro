@@ -12,9 +12,11 @@
     "node": ">=22.18"
   },
   "bin": {
-    "shared-pro": "src/cli.ts"
+    "shared-pro": "dist/cli.js"
   },
   "scripts": {
+    "build": "node scripts/build.ts",
+    "prepare": "node scripts/build.ts",
     "test": "node --test test/*.test.ts"
   },
   "dependencies": {
@@ -24,5 +26,10 @@
   },
   "devDependencies": {
     "happy-dom": "^21.0.4"
-  }
+  },
+  "files": [
+    "dist",
+    "widget",
+    "README.md"
+  ]
 }
