@@ -5,15 +5,26 @@ import { createInterface } from 'node:readline'
 const TUNNEL_URL = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/
 
 /**
- * Starts a Cloudflare quick tunnel to localhost:port. `stop` is usable immediately (so Ctrl+C during startup
- * can't orphan a public tunnel); `ready` resolves once the URL is printed AND a connection is registered.
+ * Starts a Cloudflare tunnel to localhost:port: a quick tunnel (random trycloudflare.com URL) or, with `name` +
+ * `hostname`, a named tunnel the user created in their own zone (fixed URL). `stop` is usable immediately (so
+ * Ctrl+C during startup can't orphan a public tunnel); `ready` resolves with the public URL once a connection is
+ * registered (and, for quick tunnels, the URL was printed).
  */
-export function startTunnel({ port, bin = 'cloudflared', timeoutMs = 30_000 }: { port: number; bin?: string; timeoutMs?: number }) {
-  const child = spawn(bin, ['tunnel', '--url', `http://localhost:${port}`], { stdio: ['ignore', 'ignore', 'pipe'] })
+export function startTunnel({
+  port,
+  bin = 'cloudflared',
+  timeoutMs = 30_000,
+  name,
+  hostname,
+}: { port: number; bin?: string; timeoutMs?: number; name?: string; hostname?: string }) {
+  const url = `http://localhost:${port}`
+  // --url is an option of `tunnel`, so it goes before `run`: cloudflared tunnel --url <url> run <name>
+  const args = name ? ['tunnel', '--url', url, 'run', name] : ['tunnel', '--url', url]
+  const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] })
   const stop = () => child.kill()
 
   const ready = new Promise<string>((resolve, reject) => {
-    let url: string | undefined
+    let publicUrl = name ? `https://${hostname}` : undefined // named tunnels print no URL: it is the hostname
     let registered = false
     let settled = false
     const tail: string[] = []
@@ -29,12 +40,12 @@ export function startTunnel({ port, bin = 'cloudflared', timeoutMs = 30_000 }: {
     createInterface({ input: child.stderr }).on('line', (line) => {
       tail.push(line)
       if (tail.length > 8) tail.shift()
-      url ??= TUNNEL_URL.exec(line)?.[0]
+      publicUrl ??= TUNNEL_URL.exec(line)?.[0]
       registered ||= line.includes('Registered tunnel connection')
-      if (url && registered && !settled) {
+      if (publicUrl && registered && !settled) {
         settled = true
         clearTimeout(timer)
-        resolve(url)
+        resolve(publicUrl)
       }
     })
     child.on('error', (e: NodeJS.ErrnoException) =>

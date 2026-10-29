@@ -130,3 +130,40 @@ test('CLI with an unknown flag or missing value prints a short error + usage and
     assert.doesNotMatch(stderr, /node:internal|ERR_PARSE_ARGS|\n\s+at \S+ \(/, args.join(' '))
   }
 })
+
+// Named tunnel: fixed hostname from the user's Cloudflare zone. cloudflared prints no URL for it,
+// so "ready" is just the registered connection and the URL is the configured hostname.
+test('named tunnel: `tunnel --url … run <name>`, ready on registered connection, URL = hostname', async () => {
+  const named = join(dir, 'named.log')
+  writeFileSync(named, readFileSync(FIXTURE, 'utf8').split('\n').filter((l) => !/trycloudflare\.com/.test(l)).join('\n'))
+  const bin = fakeBin('named', 'exec sleep 30', named)
+  const t = startTunnel({ port: 4321, bin, name: 'qtw-review', hostname: 'review.example.com' })
+  assert.equal(await t.ready, 'https://review.example.com')
+  assert.equal(readFileSync(`${bin}.args`, 'utf8').trim(), 'tunnel --url http://localhost:4321 run qtw-review')
+  t.stop()
+  await once(t.child, 'exit')
+})
+
+test('CLI: --tunnel-name needs --hostname; with both the share link uses the fixed hostname', async () => {
+  const run = (args: string[]) => {
+    const cli = spawn(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), '--target', '1', '--port', '0', ...args])
+    let out = ''
+    cli.stdout.on('data', (d) => (out += d))
+    cli.stderr.on('data', (d) => (out += d))
+    return { cli, out: () => out }
+  }
+  const missing = run(['--tunnel-name', 'qtw-review', '--dir', mkdtempSync(join(tmpdir(), 'sp-cli-'))])
+  assert.equal((await once(missing.cli, 'exit'))[0], 2)
+  assert.match(missing.out(), /--tunnel-name needs --hostname/)
+
+  const named = join(dir, 'named-cli.log')
+  writeFileSync(named, readFileSync(FIXTURE, 'utf8').split('\n').filter((l) => !/trycloudflare\.com/.test(l)).join('\n'))
+  const bin = fakeBin('named-cli', 'exec sleep 30', named)
+  const data = mkdtempSync(join(tmpdir(), 'sp-cli-'))
+  const ok = run(['--tunnel-name', 'qtw-review', '--hostname', 'https://review.example.com/', '--path', '/qtw-project-manager', '--dir', data, '--cloudflared', bin])
+  for (let i = 0; i < 100 && !/share link:/.test(ok.out()); i++) await new Promise((r) => setTimeout(r, 50))
+  const token = readFileSync(join(data, '.shared-pro', 'token'), 'utf8').trim()
+  assert.match(ok.out(), new RegExp(`share link: https://review\\.example\\.com/qtw-project-manager\\?sp=${token}`))
+  ok.cli.kill('SIGTERM')
+  await once(ok.cli, 'exit')
+})

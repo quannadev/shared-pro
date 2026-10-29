@@ -12,6 +12,7 @@ import { startTunnel } from './tunnel.ts'
 
 const USAGE = `usage:
   shared-pro [start] --target 3000 [--port 3100] [--path /base] [--dir .] [--public] [--no-tunnel] [--cloudflared bin]
+                    [--tunnel-name NAME --hostname review.example.com]   fixed URL via your own named tunnel
   shared-pro mcp [--dir .]      MCP server on stdio for AI agents (reads <dir>/.shared-pro/comments.db)`
 
 const usageError = (msg: string): never => {
@@ -32,6 +33,8 @@ function parse() {
         public: { type: 'boolean', default: false },
         tunnel: { type: 'boolean', default: true },
         cloudflared: { type: 'string', default: 'cloudflared' },
+        'tunnel-name': { type: 'string' },
+        hostname: { type: 'string' },
       },
     })
   } catch (e) {
@@ -41,6 +44,12 @@ function parse() {
 const { values, positionals } = parse()
 const command = positionals[0] ?? 'start'
 if (!['start', 'mcp'].includes(command) || positionals.length > 1) usageError(`unknown command: ${positionals.join(' ')}`)
+const tunnelName = values['tunnel-name']
+const hostname = values.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+if (tunnelName && !hostname) usageError('--tunnel-name needs --hostname (the DNS name you routed to that tunnel)')
+if (hostname && !tunnelName) usageError('--hostname only applies together with --tunnel-name')
+if (tunnelName && !/^[\w.-]+$/.test(tunnelName)) usageError(`invalid --tunnel-name: ${tunnelName}`)
+if (hostname && !/^[a-z0-9.-]+$/i.test(hostname)) usageError(`invalid --hostname: ${values.hostname}`)
 
 const dataDir = join(resolve(values.dir!), '.shared-pro')
 const store = openStore(join(dataDir, 'comments.db'))
@@ -82,7 +91,7 @@ function start() {
     console.log(`local link: ${link(`http://localhost:${port}`)}`)
     if (!values.tunnel) return
     console.log('tunnel:     starting cloudflared…')
-    const t = startTunnel({ port, bin: values.cloudflared })
+    const t = startTunnel({ port, bin: values.cloudflared, name: tunnelName, hostname })
     stopTunnel = t.stop
     try {
       const url = await t.ready
