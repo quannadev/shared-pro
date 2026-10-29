@@ -66,3 +66,37 @@ test('file DB is shared between two connections (proxy + MCP processes)', () => 
   a.create({ url: '/', author: 'A', body: 'from proxy' })
   assert.equal(b.list({})[0].body, 'from proxy')
 })
+
+const waitFor = async (cond: () => boolean, ms = 2000) => {
+  for (const end = Date.now() + ms; Date.now() < end; ) {
+    if (cond()) return true
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  return cond()
+}
+
+test('watch fires on own writes immediately (data_version does not change for them)', () => {
+  const s = fresh()
+  let n = 0
+  const stop = s.watch(() => n++)
+  const t = s.create({ url: '/', author: 'A', body: 'x' })
+  assert.equal(n, 1)
+  s.setStatus(t.id, 'resolved')
+  assert.equal(n, 2)
+  stop()
+  s.create({ url: '/', author: 'A', body: 'y' })
+  assert.equal(n, 2, 'no calls after stop')
+})
+
+test('watch fires when another connection (the MCP process) writes', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'sp-')), 'comments.db')
+  const proxy = openStore(file)
+  const mcp = openStore(file)
+  let n = 0
+  const stop = proxy.watch(() => n++, 50)
+  mcp.create({ url: '/', author: 'AI Agent', body: 'fixed', by_agent: true })
+  assert.ok(await waitFor(() => n === 1), 'external write noticed')
+  await new Promise((r) => setTimeout(r, 200))
+  assert.equal(n, 1, 'fires once per change, not on every tick')
+  stop()
+})

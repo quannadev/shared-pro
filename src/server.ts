@@ -1,7 +1,7 @@
 import http from 'node:http'
 import net from 'node:net'
 import { readFileSync } from 'node:fs'
-import { handleApi, handleShareLink } from './api.ts'
+import { handleApi, handleShareLink, type Changes } from './api.ts'
 import type { Store } from './store.ts'
 
 const SCRIPT = '<script type="module" src="/__sp/widget.js"></script>'
@@ -20,10 +20,14 @@ export function createProxy({ target, store, token }: { target: string; store: S
     return value
   }
 
+  // ponytail: every waiting client wakes on every change and refetches its own page; key by url if pages get busy.
+  const changes: Changes = { version: 0, waiters: new Set() }
+  const unwatch = store.watch(() => (changes.version++, changes.waiters.forEach((wake) => wake())))
+
   const server = http.createServer((req, res) => {
     if (token && handleShareLink(req, res, token)) return
     if (req.url?.startsWith('/__sp/')) {
-      if (req.url.startsWith('/__sp/api/')) return void handleApi(req, res, store, token)
+      if (req.url.startsWith('/__sp/api/')) return void handleApi(req, res, store, token, changes)
       if (req.url.startsWith('/__sp/widget.js')) {
         // Read per request: tiny file, and edits show up on reload without restarting the proxy.
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' })
@@ -67,5 +71,6 @@ export function createProxy({ target, store, token }: { target: string; store: S
     socket.on('close', () => up.destroy())
   })
 
+  server.on('close', unwatch)
   return server
 }

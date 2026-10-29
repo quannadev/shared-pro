@@ -7,6 +7,7 @@ import { openStore } from '../src/store.ts'
 
 const TOKEN = 'secret-token'
 let upstream: http.Server, proxy: http.Server, base: string
+const store = openStore(':memory:')
 const upstreamHits: string[] = []
 const auth = { cookie: `sp_token=${TOKEN}` }
 const json = { ...auth, 'content-type': 'application/json' }
@@ -18,7 +19,7 @@ before(async () => {
   await new Promise<void>((r) => upstream.listen(0, r))
   proxy = createProxy({
     target: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
-    store: openStore(':memory:'),
+    store,
     token: TOKEN,
   })
   await new Promise<void>((r) => proxy.listen(0, r))
@@ -50,7 +51,7 @@ test('API without the token cookie is 401, app itself still proxies', async () =
   assert.equal(await (await fetch(`${base}/some/page`)).text(), 'app')
 })
 
-test('create thread + reply, list by url, resolve via PATCH', async () => {
+test('create thread + reply, list by url', async () => {
   const created = await post({ url: '/p', author: ' An ', body: 'Sai màu', selector: '#save', pos_x: 50, pos_y: 10 })
   assert.equal(created.status, 201)
   const t = await created.json()
@@ -62,16 +63,27 @@ test('create thread + reply, list by url, resolve via PATCH', async () => {
   assert.equal(list.threads.length, 1)
   assert.equal(list.threads[0].replies[0].body, 'đồng ý')
 
-  const patched = await fetch(`${base}/__sp/api/comments/${t.id}`, {
-    method: 'PATCH',
-    headers: json,
-    body: JSON.stringify({ status: 'resolved' }),
-  })
-  assert.equal(patched.status, 200)
-  assert.equal((await patched.json()).status, 'resolved')
-
   const open = await (await fetch(`${base}/__sp/api/comments?url=/p&status=open`, { headers: auth })).json()
-  assert.equal(open.threads.length, 0)
+  assert.equal(open.threads.length, 1)
+})
+
+const patch = (id: string, body: unknown) =>
+  fetch(`${base}/__sp/api/comments/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify(body) })
+
+test('only the AI agent resolves: reviewers get 403 on PATCH resolved, thread stays open', async () => {
+  const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
+  const res = await patch(t.id, { status: 'resolved' })
+  assert.equal(res.status, 403)
+  assert.match((await res.json()).error, /AI agent/)
+  assert.equal(store.get(t.id)!.status, 'open')
+})
+
+test('reviewers can reopen a thread the agent resolved (safety valve)', async () => {
+  const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
+  store.setStatus(t.id, 'resolved') // what the MCP resolve_comment tool does
+  const res = await patch(t.id, { status: 'open' })
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).status, 'open')
 })
 
 test('reviewers cannot impersonate the agent', async () => {
@@ -102,10 +114,8 @@ test('validation errors are 400 with a message', async () => {
 
 test('PATCH rejects bad status and unknown id', async () => {
   const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
-  const patch = (id: string, body: unknown) =>
-    fetch(`${base}/__sp/api/comments/${id}`, { method: 'PATCH', headers: json, body: JSON.stringify(body) })
   assert.equal((await patch(t.id, { status: 'done' })).status, 400)
-  assert.equal((await patch('missing', { status: 'resolved' })).status, 404)
+  assert.equal((await patch('missing', { status: 'open' })).status, 404)
 })
 
 test('non-JSON body is 415, oversized body is 413', async () => {
@@ -117,4 +127,41 @@ test('unknown API route is 404 and /__sp/ never reaches the app', async () => {
   upstreamHits.length = 0
   assert.equal((await fetch(`${base}/__sp/api/nope`, { headers: auth })).status, 404)
   assert.deepEqual(upstreamHits, [])
+})
+
+// Long-poll instead of SSE: Cloudflare Quick Tunnels buffer SSE (documented), plain responses pass through.
+const changes = (qs: string, headers: Record<string, string> = auth) => fetch(`${base}/__sp/api/changes?${qs}`, { headers })
+
+test('GET /__sp/api/changes needs the token and a numeric since', async () => {
+  assert.equal((await changes('since=0', {})).status, 401)
+  assert.equal((await changes('since=abc')).status, 400)
+})
+
+test('changes: a stale `since` answers at once with the current version', async () => {
+  const { version } = await (await changes('since=-1')).json()
+  assert.equal(typeof version, 'number')
+  const t0 = Date.now()
+  const res = await changes(`since=${version - 1}`)
+  assert.equal((await res.json()).version, version)
+  assert.ok(Date.now() - t0 < 200)
+})
+
+test('changes: a current `since` is held until a write, then answers immediately', async () => {
+  const { version } = await (await changes('since=-1')).json()
+  const held = changes(`since=${version}`)
+  await new Promise((r) => setTimeout(r, 150)) // the request is now waiting on the server
+  const t0 = Date.now()
+  await post({ url: '/p', author: 'A', body: 'wake up' })
+  const res = await held
+  assert.equal((await res.json()).version, version + 1)
+  assert.ok(Date.now() - t0 < 300, `woke in ${Date.now() - t0}ms`)
+  assert.equal(res.headers.get('cache-control'), 'no-store')
+})
+
+test('changes: a held request times out with the same version (client just asks again)', async () => {
+  const { version } = await (await changes('since=-1')).json()
+  const t0 = Date.now()
+  const res = await changes(`since=${version}&wait=200`)
+  assert.equal((await res.json()).version, version)
+  assert.ok(Date.now() - t0 >= 180, 'was actually held')
 })

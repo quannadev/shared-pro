@@ -55,6 +55,10 @@ export function openStore(file: string) {
     ...t,
     replies: db.prepare('SELECT * FROM comments WHERE parent_id = ? ORDER BY created_at, rowid').all(t.id) as Comment[],
   })
+  const listeners = new Set<() => void>()
+  const changed = () => listeners.forEach((l) => l())
+  // Bumps only for commits by *other* connections (e.g. the MCP process); our own writes call changed() directly.
+  const dataVersion = () => (db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version
 
   return {
     create(c: NewComment): Comment {
@@ -75,6 +79,7 @@ export function openStore(file: string) {
           c.pos_x ?? null, c.pos_y ?? null, c.viewport ?? null, c.author, c.body, c.by_agent ? 1 : 0, new Date().toISOString(),
         ] satisfies SQLInputValue[]),
       )
+      changed()
       return row(id)!
     },
 
@@ -98,7 +103,21 @@ export function openStore(file: string) {
       const { changes } = db
         .prepare('UPDATE comments SET status = ?, resolved_at = ? WHERE id = ? AND parent_id IS NULL')
         .run(status, resolvedAt, id)
-      return changes ? this.get(id) : undefined
+      if (!changes) return undefined
+      changed()
+      return this.get(id)
+    },
+
+    /** Calls `cb` after any write, ours or another process's. Returns an unsubscribe function. */
+    watch(cb: () => void, everyMs = 300): () => void {
+      listeners.add(cb)
+      let last = dataVersion()
+      const timer = setInterval(() => {
+        const v = dataVersion()
+        if (v !== last) (last = v), cb()
+      }, everyMs)
+      timer.unref() // never keeps the process alive on its own
+      return () => (clearInterval(timer), listeners.delete(cb))
     },
   }
 }

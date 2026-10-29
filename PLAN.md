@@ -46,7 +46,7 @@ Cờ: `--port` (3100), `--dir` (cwd, nơi tạo `.shared-pro/`), `--path` (trang
 | CSP | Widget phục vụ cùng origin `/__sp/` → `script-src 'self'` vẫn qua; nếu app có CSP chặt thì strip header CSP (chỉ ở dev proxy) | |
 | Host check (Vite `allowedHosts`, Next `allowedDevOrigins`) | `changeOrigin: true` → upstream luôn thấy `Host: localhost:3000` | |
 | Widget | **Vanilla JS (ES module) + Shadow DOM**, 1 file `widget/widget.js`, phục vụ nguyên bản, không build | `stripTypeScriptTypes` của Node còn in ExperimentalWarning; repo không typecheck nên TS không đáng thêm 1 bước build |
-| Realtime | Polling 5s ở MVP → SSE ở phase sau | Đơn giản, chắc chạy qua tunnel |
+| Realtime | **Long-poll** `/__sp/api/changes` + `PRAGMA data_version` (polling 5s/30s dự phòng) | SSE bị Cloudflare Quick Tunnel buffer (tài liệu ghi rõ, đã đo: 0 chunk trong 6s); long-poll đo được ~0,6s qua tunnel |
 | MCP | `@modelcontextprotocol/sdk`, transport **stdio** | Agent spawn trực tiếp; không mở endpoint MCP ra Internet |
 | Test | `node:test` + `node:assert` | Không thêm framework |
 
@@ -184,7 +184,15 @@ Phát hiện:
 ### Phase 5 — Nâng cấp (khi cần)
 - **Source hint**: đọc attribute `data-insp-path` nếu app dùng `code-inspector-plugin` (Vite/webpack) → AI biết đúng file:line, không phải grep.
 - **Screenshot** vùng phần tử (`html-to-image`) lưu `.shared-pro/shots/`, MCP trả về dạng image để agent multimodal nhìn.
-- SSE thay polling; thông báo cho dev khi có comment mới (terminal bell / MCP notification).
+- ~~SSE thay polling~~ → đã làm bằng long-poll (xem Phase 6). Còn: thông báo cho dev khi có comment mới (terminal bell / MCP notification).
+
+### Phase 6 — Realtime + quyền resolve ✅ XONG (2026-10-29)
+- `store.watch()`: gọi ngay khi chính process ghi; ghi từ process khác (MCP) phát hiện qua `PRAGMA data_version` (đã kiểm: giá trị này **không** đổi với ghi của chính connection, nên cần cả hai đường).
+- Thử SSE trước: qua Quick Tunnel nhận được headers nhưng **không chunk nào** trong 6s, với mọi biến thể header (có/không `charset`, `no-transform`); local thì 1 chunk/giây. Cloudflare ghi rõ "Quick Tunnels do not support Server-Sent Events". → thay bằng long-poll.
+- Đo thật qua tunnel trong browser: comment của người khác hiện sau **575ms**; reply của AI từ process `cli.ts mcp` riêng hiện sau **575ms** (trước đây tới 5s).
+- Widget chống race: số thứ tự cho mỗi `load()`, response cũ hơn bị bỏ.
+- Theo yêu cầu: **chỉ AI Agent resolve** (MCP `resolve_comment`). API `PATCH status=resolved` → `403`; người dùng chỉ "Mở lại". Nguyên nhân: reviewer trên điện thoại bấm nhầm "✓ Xong" 4,6s sau khi gửi, comment biến mất khỏi tab Đang mở.
+- Test: 58/58.
 - Tool MCP `wait_for_comments` để agent chạy vòng lặp "chờ comment → sửa".
 
 **Tổng MVP (Phase 0–4): ~5 ngày.**

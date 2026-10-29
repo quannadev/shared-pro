@@ -21,8 +21,8 @@ AI Agent ◄─stdio─ shared-pro mcp
 ## Tính năng
 
 - **Một lệnh**: chạy proxy, tự mở Cloudflare Quick Tunnel, in ra share link đầy đủ.
-- **Góp ý trực quan**: chọn phần tử trên trang, pin đánh số đặt đúng điểm click, có thread trả lời, đánh dấu xong / mở lại.
-- **Realtime nhẹ**: widget tự cập nhật mỗi 5 giây, không mất nội dung đang gõ.
+- **Góp ý trực quan**: chọn phần tử trên trang, pin đánh số đặt đúng điểm click, có thread trả lời. Chỉ AI Agent được đánh dấu xong, người review có thể mở lại.
+- **Realtime**: góp ý của người khác và reply của AI hiện ra sau khoảng 0,6 giây (đo thật qua tunnel), không mất nội dung đang gõ.
 - **Cho AI Agent**: 4 tool MCP để liệt kê, đọc chi tiết (selector, text, HTML của phần tử), trả lời và resolve. Reply của agent có badge 🤖.
 - **Không đụng app**: widget nằm trong Shadow DOM, HMR của Vite/Next vẫn chạy qua tunnel, streaming SSR không bị buffer ở proxy.
 - **Có kiểm soát truy cập**: share token, chống XSS, chống CSRF, chặn reviewer giả danh agent, bọc nội dung góp ý để giảm rủi ro prompt injection.
@@ -91,7 +91,8 @@ shared-pro mcp [--dir .]          MCP server qua stdio cho AI Agent
 3. Bấm **+ Thêm góp ý** (hoặc phím **C** khi bảng đang mở). Rê chuột để thấy phần tử được viền xanh, rồi click vào phần tử muốn góp ý. Trong chế độ này click không kích hoạt app: link không chuyển trang, nút không chạy.
 4. Nhập tên (chỉ hỏi lần đầu) và nội dung, gửi bằng **⌘/Ctrl + Enter** hoặc nút **Gửi**.
 5. Mỗi góp ý có một pin số trên trang. Click pin hoặc thẻ trong bảng để cuộn tới đúng phần tử.
-6. Mỗi thread có ô **Trả lời**, nút **✓ Xong** và **Mở lại**. Tab **Đang mở / Đã xong** để lọc.
+6. Mỗi thread có ô **Trả lời**. Tab **Đang mở / Đã xong** để lọc.
+7. **Chỉ AI Agent được đánh dấu xong** (sau khi đã sửa code), và API cũng chặn người dùng làm việc này. Nếu thấy chưa đạt, bấm **Mở lại** trên thread trong tab *Đã xong*.
 
 **Esc** thoát chế độ chọn hoặc đóng ô nhập. Góp ý được lưu theo đường dẫn trang (`/path?query`), nên chuyển trang trong SPA sẽ thấy đúng góp ý của trang đó.
 
@@ -131,11 +132,18 @@ claude mcp add shared-pro -- node /đường/dẫn/shared-pro/src/cli.ts mcp --d
 | `list_comments` | `status` (`open` mặc định / `resolved`), `url?` | Liệt kê thread: id, trang, phần tử, nội dung |
 | `get_comment` | `id` | Chi tiết: selector, text, HTML của phần tử, vị trí click, viewport, các reply |
 | `reply_comment` | `id`, `body` | Trả lời hoặc hỏi lại người review (hiển thị với 🤖) |
-| `resolve_comment` | `id`, `note?` | Đánh dấu xong. `note` được đăng thành reply để người review biết đã đổi gì |
+| `resolve_comment` | `id`, `note?` | Đánh dấu xong. Đây là cách **duy nhất** để resolve: API từ trình duyệt trả `403`. `note` được đăng thành reply để người review biết đã đổi gì |
 
-Vòng làm việc thường gặp: `list_comments` → `get_comment` → tìm phần tử trong code (theo text hoặc HTML) → sửa → HMR tự reload trang của người review → `resolve_comment` với ghi chú ngắn. Người review sẽ thấy ✓ và ghi chú trong vòng 5 giây.
+Vòng làm việc thường gặp: `list_comments` → `get_comment` → tìm phần tử trong code (theo text hoặc HTML) → sửa → HMR tự reload trang của người review → `resolve_comment` với ghi chú ngắn. Người review thấy ✓ và ghi chú gần như ngay lập tức.
 
 Proxy và MCP là hai process riêng nhưng dùng chung file SQLite (chế độ WAL), nên agent đọc được góp ý kể cả khi proxy đã tắt.
+
+### Cập nhật realtime hoạt động thế nào
+
+- Widget dùng **long-polling**: gửi `GET /__sp/api/changes?since=<version>` và proxy giữ request đó cho đến khi có thay đổi (tối đa 25 giây), rồi widget tải lại ngay.
+- Proxy biết có thay đổi theo hai đường: ghi từ chính nó (API), và ghi từ process MCP, phát hiện qua `PRAGMA data_version` của SQLite mỗi 0,3 giây.
+- **Không dùng SSE** vì [Cloudflare Quick Tunnel không hỗ trợ SSE](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/): đã đo, stream bị giữ lại hoàn toàn. Long-poll gồm các response ngắn, đi qua tunnel bình thường.
+- Polling dự phòng: mỗi 5 giây nếu long-poll lỗi, mỗi 30 giây khi long-poll đang chạy tốt.
 
 ## Dữ liệu
 

@@ -96,7 +96,20 @@ function parseNewComment(input: unknown): NewComment {
   }
 }
 
-export async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, store: Store, token?: string) {
+/**
+ * Long-poll hub. `version` bumps on every store write; held /changes requests are answered on the next bump.
+ * Not SSE: Cloudflare Quick Tunnels buffer SSE (documented limitation), but short plain responses pass straight through.
+ */
+export type Changes = { version: number; waiters: Set<() => void> }
+const MAX_WAIT_MS = 25_000 // well under Cloudflare's 100s origin timeout
+
+export async function handleApi(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  store: Store,
+  token: string | undefined,
+  changes: Changes,
+) {
   const send = (status: number, data: unknown) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     res.end(JSON.stringify(data))
@@ -104,6 +117,19 @@ export async function handleApi(req: http.IncomingMessage, res: http.ServerRespo
   try {
     if (!hasToken(req, token)) throw new HttpError(401, 'missing or invalid share token, open the shared link (?sp=…) again')
     const u = new URL(req.url!, 'http://x')
+    if (u.pathname === '/__sp/api/changes' && req.method === 'GET') {
+      const since = Number(u.searchParams.get('since') ?? NaN)
+      if (!Number.isInteger(since)) bad('since must be an integer')
+      if (since !== changes.version) return send(200, { version: changes.version })
+      const wait = Math.min(Number(u.searchParams.get('wait')) || MAX_WAIT_MS, MAX_WAIT_MS)
+      return await new Promise<void>((done) => {
+        const finish = () => (clearTimeout(timer), changes.waiters.delete(reply), done())
+        const reply = () => (res.writableEnded || send(200, { version: changes.version }), finish())
+        const timer = setTimeout(reply, wait)
+        changes.waiters.add(reply)
+        res.on('close', finish) // client went away (tab closed, navigation): drop the waiter
+      })
+    }
     const m = /^\/__sp\/api\/comments(?:\/([^/]+))?$/.exec(u.pathname)
     const id = m?.[1] && decodeURIComponent(m[1])
 
@@ -116,6 +142,8 @@ export async function handleApi(req: http.IncomingMessage, res: http.ServerRespo
     if (id && req.method === 'PATCH') {
       const { status } = ((await readJson(req)) ?? {}) as { status?: unknown }
       if (!STATUSES.includes(status as Status)) bad('status must be open or resolved')
+      // Resolving means "fixed", and only the AI agent (MCP resolve_comment) says that. People can only reopen.
+      if (status === 'resolved') throw new HttpError(403, 'only the AI agent can resolve a thread (via MCP resolve_comment)')
       const thread = store.setStatus(id, status as Status)
       return thread ? send(200, thread) : send(404, { error: 'thread not found' })
     }

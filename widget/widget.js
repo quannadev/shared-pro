@@ -2,7 +2,8 @@
 // Everything visible lives in a shadow root so the app's CSS and ours never touch.
 
 const API = '/__sp/api/comments'
-const POLL_MS = 5000
+const POLL_MS = 5000 // when the long-poll is down
+const SAFETY_POLL_MS = 30000 // while it is up, in case a change is ever missed
 const T = {
   title: 'Góp ý',
   add: '+ Thêm góp ý (C)',
@@ -20,7 +21,6 @@ const T = {
   send: 'Gửi',
   cancel: 'Hủy',
   reply: 'Trả lời',
-  resolve: '✓ Xong',
   reopen: 'Mở lại',
   close: 'Đóng',
   noToken: 'Link thiếu mã chia sẻ. Hãy mở lại đúng link được gửi cho bạn (có ?sp=…).',
@@ -231,17 +231,21 @@ function mount() {
     return data
   }
 
+  let seq = 0
+  let lastLoad = 0
   async function load() {
     const url = state.url
+    const mine = ++seq
+    lastLoad = Date.now()
     let threads
     try {
       ;({ threads } = await api(`?url=${encodeURIComponent(url)}`))
     } catch (e) {
       // Only network/API errors land here; a render bug must stay a loud uncaught error, not a banner.
-      if (state.error !== e.message) ((state.error = e.message), render())
+      if (mine === seq && state.error !== e.message) ((state.error = e.message), render())
       return
     }
-    if (url !== state.url) return // navigated while in flight
+    if (mine !== seq || url !== state.url) return // a newer load or a navigation superseded this one
     const json = JSON.stringify(threads)
     if (json === lastJson && !state.error) return
     lastJson = json
@@ -482,7 +486,8 @@ function mount() {
       drafts.delete(t.id)
     })
     ta.addEventListener('keydown', submitOnCmdEnter(send))
-    const toggle = act(() => api(`/${t.id}`, { method: 'PATCH', body: { status: t.status === 'open' ? 'resolved' : 'open' } }))
+    // Resolving is the AI agent's job (MCP resolve_comment, enforced by the API); people can only reopen.
+    const reopen = act(() => api(`/${t.id}`, { method: 'PATCH', body: { status: 'open' } }))
 
     return h(
       'article',
@@ -517,7 +522,7 @@ function mount() {
         h(
           'div',
           { class: 'row' },
-          h('button', { onclick: toggle }, t.status === 'open' ? T.resolve : T.reopen),
+          t.status === 'resolved' && h('button', { onclick: reopen }, T.reopen),
           h('button', { class: 'primary', onclick: send }, T.reply),
         ),
       ),
@@ -537,7 +542,30 @@ function mount() {
     }
     position() // layout can shift without scroll (HMR, async content)
   }, 1000)
-  setInterval(() => document.hidden || load(), POLL_MS)
+  // Push via long-poll: the proxy holds /changes until anyone (a reviewer or the AI agent) writes, then we refetch at once.
+  // Not SSE/EventSource: Cloudflare Quick Tunnels buffer SSE. Polling stays as the fallback, slowed while this is healthy.
+  let version = -1
+  let liveUntil = 0
+  ;(async function watchChanges() {
+    for (;;) {
+      try {
+        const res = await fetch(`/__sp/api/changes?since=${version}`)
+        if (res.status === 401) return // load() already shows the token banner
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const next = (await res.json()).version
+        liveUntil = Date.now() + 60_000 // a held request lasts ≤ 25s
+        if (version !== -1 && next !== version && !document.hidden) load()
+        version = next
+      } catch {
+        liveUntil = 0
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+    }
+  })()
+  setInterval(() => {
+    const live = Date.now() < liveUntil
+    if (!document.hidden && Date.now() - lastLoad >= (live ? SAFETY_POLL_MS : POLL_MS)) load()
+  }, POLL_MS)
   document.addEventListener('visibilitychange', () => document.hidden || load())
 
   render()
