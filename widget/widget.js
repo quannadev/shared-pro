@@ -1,0 +1,547 @@
+// shared-pro review widget. Plain ES module served as-is from /__sp/widget.js (no build step).
+// Everything visible lives in a shadow root so the app's CSS and ours never touch.
+
+const API = '/__sp/api/comments'
+const POLL_MS = 5000
+const T = {
+  title: 'Góp ý',
+  add: '+ Thêm góp ý (C)',
+  cancelPick: 'Hủy chọn (Esc)',
+  hint: 'Click vào phần tử muốn góp ý · Esc để thoát',
+  open: 'Đang mở',
+  resolved: 'Đã xong',
+  emptyOpen: 'Chưa có góp ý nào trên trang này.',
+  emptyResolved: 'Chưa có góp ý nào được xử lý.',
+  missing: '⚠ Không còn thấy phần tử này trên trang',
+  name: 'Tên của bạn',
+  needName: 'Nhập tên trước khi gửi.',
+  placeholder: 'Góp ý cho phần tử này… (⌘/Ctrl+Enter để gửi)',
+  replyPh: 'Trả lời…',
+  send: 'Gửi',
+  cancel: 'Hủy',
+  reply: 'Trả lời',
+  resolve: '✓ Xong',
+  reopen: 'Mở lại',
+  close: 'Đóng',
+  noToken: 'Link thiếu mã chia sẻ. Hãy mở lại đúng link được gửi cho bạn (có ?sp=…).',
+}
+
+// ---------- pure helpers (unit-tested with happy-dom) ----------
+
+const isGeneratedId = (id) => /[:«»]/.test(id) || /^\d/.test(id) // React useId, numeric ids
+const cssEscape = (el, s) => el.ownerDocument.defaultView?.CSS?.escape?.(s) ?? s.replace(/[^\w-]/g, (c) => `\\${c}`)
+
+/** Shortest-ish selector that uniquely finds `el`: nearest unique #id / data-testid, then tag:nth-of-type steps. */
+export function cssPath(el) {
+  const doc = el.ownerDocument
+  const unique = (sel) => {
+    try {
+      return doc.querySelectorAll(sel).length === 1
+    } catch {
+      return false
+    }
+  }
+  const parts = []
+  for (let node = el; node && node !== doc.body && node !== doc.documentElement; node = node.parentElement) {
+    if (node.id && !isGeneratedId(node.id) && unique(`#${cssEscape(node, node.id)}`)) {
+      return [`#${cssEscape(node, node.id)}`, ...parts].join(' > ')
+    }
+    for (const attr of ['data-testid', 'data-test', 'data-cy']) {
+      const v = node.getAttribute(attr)
+      const sel = v && `[${attr}="${v.replace(/["\\]/g, '\\$&')}"]`
+      if (sel && unique(sel)) return [sel, ...parts].join(' > ')
+    }
+    const same = [...(node.parentElement?.children ?? [])].filter((c) => c.localName === node.localName)
+    parts.unshift(same.length > 1 ? `${node.localName}:nth-of-type(${same.indexOf(node) + 1})` : node.localName)
+  }
+  return ['body', ...parts].join(' > ')
+}
+
+/** What we store about the clicked element so a human and an AI agent can find it again. */
+export function describe(el, x, y) {
+  const r = el.getBoundingClientRect()
+  const pct = (v, start, size) => (size > 0 ? Math.round(Math.min(100, Math.max(0, ((v - start) / size) * 100)) * 10) / 10 : 0)
+  const selector = cssPath(el)
+  return {
+    selector: selector.length <= 1000 ? selector : undefined,
+    text_snippet: (el.innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || undefined,
+    html_snippet: el.outerHTML.slice(0, 2000),
+    pos_x: pct(x, r.left, r.width),
+    pos_y: pct(y, r.top, r.height),
+  }
+}
+
+export function findAnchor(doc, thread) {
+  if (!thread.selector) return null
+  try {
+    return doc.querySelector(thread.selector)
+  } catch {
+    return null
+  }
+}
+
+/** Comments are keyed by path + query (basePath kept, hash and share token dropped). */
+export function pageKey(loc) {
+  const u = new URL(loc.href)
+  if (u.searchParams.has('sp')) u.searchParams.delete('sp')
+  return u.pathname + u.search
+}
+
+/** Flattens and drops null/false/undefined: append()/replaceChildren() would print them as text. */
+export const nodes = (...children) => children.flat().filter((c) => c != null && c !== false)
+
+/** Tiny element builder. Strings become text nodes, so untrusted comment text can never become HTML. */
+export function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag)
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
+    else if (k === 'class') el.className = v
+    else if (k === 'value') el.value = v
+    else el.setAttribute(k, v === true ? '' : String(v))
+  }
+  el.append(...nodes(...children))
+  return el
+}
+
+const rtf = new Intl.RelativeTimeFormat('vi', { numeric: 'auto' })
+function ago(iso) {
+  const s = (Date.parse(iso) - Date.now()) / 1000
+  for (const [unit, n] of [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
+    if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), unit)
+  }
+  return rtf.format(0, 'second')
+}
+
+// ---------- UI ----------
+
+const STYLES = `
+* { box-sizing: border-box; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f2328; }
+[hidden] { display: none !important; }
+button { cursor: pointer; border: 1px solid #d0d7de; background: #fff; border-radius: 6px; padding: 4px 10px; }
+button:hover { background: #f6f8fa; }
+button.primary, button.primary * { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover { background: #1d4ed8; }
+textarea, input { width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px 8px; resize: vertical; background: #fff; }
+textarea:focus, input:focus { outline: 2px solid #2563eb; outline-offset: -1px; }
+.fab { position: fixed; right: 16px; bottom: 16px; height: 40px; min-width: 40px; border-radius: 20px; border: none;
+  background: #111827; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 16px; pointer-events: auto; }
+.fab, .fab * { color: #fff; } .fab:hover { background: #1f2937; } .fab.picking { background: #2563eb; }
+.fab .count { background: #ef4444; border-radius: 10px; padding: 0 6px; font-size: 12px; font-weight: 600; }
+.panel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100vw; background: #fff; border-left: 1px solid #d0d7de;
+  box-shadow: -8px 0 24px rgba(0,0,0,.12); display: flex; flex-direction: column; pointer-events: auto; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #eaeef2; }
+header strong { font-size: 15px; font-weight: 600; }
+.icon { border: none; font-size: 20px; line-height: 1; padding: 0 4px; background: none; }
+.toolbar { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #eaeef2; }
+.tabs { display: flex; gap: 4px; } .tabs button { flex: 1; }
+.tabs button.on { background: #eef2ff; border-color: #2563eb; color: #1d4ed8; }
+.list { flex: 1; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
+.card { border: 1px solid #d0d7de; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+.card.active { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.2); }
+.meta { display: flex; align-items: center; gap: 6px; } .meta b { font-weight: 600; }
+time { color: #6e7781; font-size: 12px; margin-left: auto; }
+.num { min-width: 20px; height: 20px; border-radius: 10px; background: #2563eb; color: #fff; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 11px; font-weight: 600; padding: 0 5px; }
+.num.done { background: #1a7f37; }
+p { margin: 0; } .body { white-space: pre-wrap; word-break: break-word; }
+.snippet { color: #6e7781; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warn { color: #9a6700; font-size: 12px; }
+.reply { border-left: 3px solid #eaeef2; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
+.reply.agent { border-left-color: #8250df; }
+.replybox { display: flex; flex-direction: column; gap: 6px; cursor: default; }
+.row { display: flex; justify-content: flex-end; gap: 6px; }
+.error { margin: 10px 14px 0; padding: 8px; background: #fff1f0; color: #cf222e; border-radius: 6px; }
+.empty { color: #6e7781; text-align: center; margin-top: 40px; }
+.pin { position: fixed; left: 0; top: 0; margin-top: -28px; width: 28px; height: 28px; padding: 0; border-radius: 14px 14px 14px 2px;
+  background: #2563eb; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3); font-size: 12px; font-weight: 600; pointer-events: auto; }
+.pin, .pin * { color: #fff; } .pin:hover { background: #1d4ed8; } .pin.active { background: #f59e0b; }
+.hl { position: fixed; left: 0; top: 0; border: 2px solid #2563eb; background: rgba(37,99,235,.08); border-radius: 3px; pointer-events: none; }
+.hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #111827; padding: 6px 12px; border-radius: 6px; pointer-events: none; }
+.hint, .hint * { color: #fff; }
+.composer { position: fixed; width: 320px; background: #fff; border: 1px solid #d0d7de; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  padding: 10px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+`
+
+const store = {
+  get: (k) => {
+    try {
+      return localStorage.getItem(k) ?? ''
+    } catch {
+      return ''
+    }
+  },
+  set: (k, v) => {
+    try {
+      localStorage.setItem(k, v)
+    } catch {}
+  },
+}
+
+function mount() {
+  if (window.__SP_MOUNTED) return
+  window.__SP_MOUNTED = true
+
+  const state = {
+    url: pageKey(location),
+    threads: [],
+    filter: 'open',
+    open: false,
+    picking: false,
+    active: null,
+    error: null,
+    name: store.get('sp_author'),
+    nameDraft: '',
+  }
+  const drafts = new Map() // thread id → unsent reply text, survives re-renders
+  let lastJson = ''
+  let hoverEl = null
+  let composer = null // { form, target }
+  let flashEl = null
+  let flashUntil = 0
+  let pins = []
+
+  const host = document.createElement('shared-pro-root')
+  host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;'
+  const root = host.attachShadow({ mode: 'open' })
+  const pinLayer = h('div')
+  const hl = h('div', { class: 'hl', hidden: true })
+  const hint = h('div', { class: 'hint', hidden: true }, T.hint)
+  const panel = h('aside', { class: 'panel', hidden: true })
+  const fab = h('button', {
+    class: 'fab',
+    title: T.title,
+    onclick: () => (state.picking ? setPicking(false) : ((state.open = true), render())),
+  })
+  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, fab)
+  const attach = () => host.isConnected || document.body.append(host) // React error recovery can replace <body>
+  attach()
+
+  const pickStyle = document.createElement('style')
+  pickStyle.textContent = '* { cursor: crosshair !important; }'
+
+  // ---- data ----
+  async function api(path, init) {
+    const res = await fetch(
+      API + path,
+      init && { method: init.method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(init.body) },
+    )
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(res.status === 401 ? T.noToken : data.error || `HTTP ${res.status}`)
+    return data
+  }
+
+  async function load() {
+    const url = state.url
+    let threads
+    try {
+      ;({ threads } = await api(`?url=${encodeURIComponent(url)}`))
+    } catch (e) {
+      // Only network/API errors land here; a render bug must stay a loud uncaught error, not a banner.
+      if (state.error !== e.message) ((state.error = e.message), render())
+      return
+    }
+    if (url !== state.url) return // navigated while in flight
+    const json = JSON.stringify(threads)
+    if (json === lastJson && !state.error) return
+    lastJson = json
+    state.threads = threads
+    state.error = null
+    render()
+  }
+
+  const act = (fn) => async () => {
+    try {
+      await fn()
+      await load()
+    } catch (e) {
+      state.error = e.message
+      render()
+    }
+  }
+
+  const author = (input) => {
+    const name = (state.name || input?.value || state.nameDraft || '').trim()
+    if (!name) throw new Error(T.needName)
+    if (!state.name) store.set('sp_author', (state.name = name))
+    return name
+  }
+
+  const nameField = (key) =>
+    state.name
+      ? null
+      : h('input', {
+          placeholder: T.name,
+          maxlength: 100,
+          'data-key': key,
+          value: state.nameDraft,
+          oninput: (e) => (state.nameDraft = e.target.value),
+        })
+
+  const submitOnCmdEnter = (send) => (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.preventDefault(), send())
+  }
+
+  // ---- comment mode ----
+  function setPicking(on) {
+    state.picking = on
+    hint.hidden = !on
+    if (on) document.head.append(pickStyle)
+    else (pickStyle.remove(), (hoverEl = null))
+    if (on) closeComposer()
+    position()
+    render()
+  }
+
+  const isOurs = (e) => e.composedPath().includes(host)
+
+  addEventListener(
+    'mousemove',
+    (e) => {
+      if (!state.picking || isOurs(e)) return
+      hoverEl = e.target instanceof Element ? e.target : null
+      position()
+    },
+    true,
+  )
+  // Swallow the whole click sequence so the app doesn't navigate/act while the reviewer is pointing at something.
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) {
+    addEventListener(
+      type,
+      (e) => {
+        if (!state.picking || isOurs(e)) return
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        if (type === 'click' && e.target instanceof Element) {
+          const target = e.target
+          setPicking(false)
+          openComposer(target, e.clientX, e.clientY)
+        }
+      },
+      true,
+    )
+  }
+  addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Escape' && (composer || state.picking)) return composer ? closeComposer() : setPicking(false)
+      const t = e.composedPath()[0]
+      const typing = t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      // Only while the panel is open, so we never steal the app's own "c" shortcut.
+      if (state.open && (e.key === 'c' || e.key === 'C') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) setPicking(!state.picking)
+    },
+    true,
+  )
+
+  function openComposer(target, x, y) {
+    closeComposer()
+    const info = describe(target, x, y)
+    const name = nameField('name:new')
+    const ta = h('textarea', { rows: 3, maxlength: 5000, placeholder: T.placeholder })
+    const send = act(async () => {
+      if (!ta.value.trim()) return ta.focus()
+      const viewport = `${innerWidth}x${innerHeight}`
+      const t = await api('', { method: 'POST', body: { url: state.url, ...info, viewport, author: author(name), body: ta.value } })
+      closeComposer()
+      Object.assign(state, { open: true, filter: 'open', active: t.id })
+    })
+    ta.addEventListener('keydown', submitOnCmdEnter(send))
+    const form = h(
+      'form',
+      { class: 'composer', onsubmit: (e) => (e.preventDefault(), send()) },
+      name,
+      ta,
+      h('div', { class: 'row' }, h('button', { type: 'button', onclick: closeComposer }, T.cancel), h('button', { type: 'submit', class: 'primary' }, T.send)),
+    )
+    form.style.left = `${Math.max(8, Math.min(x + 12, innerWidth - 328))}px`
+    form.style.top = `${Math.max(8, Math.min(y + 12, innerHeight - 200))}px`
+    root.append(form)
+    composer = { form, target }
+    ;(name ?? ta).focus()
+    position()
+  }
+
+  function closeComposer() {
+    composer?.form.remove()
+    composer = null
+    position()
+  }
+
+  // ---- layout (cheap, runs on scroll/resize/tick) ----
+  let raf = 0
+  const schedule = () => raf || (raf = requestAnimationFrame(() => ((raf = 0), position())))
+  addEventListener('scroll', schedule, { capture: true, passive: true })
+  addEventListener('resize', schedule)
+
+  function position() {
+    for (const { pin, t } of pins) {
+      const r = findAnchor(document, t)?.getBoundingClientRect()
+      pin.hidden = !r || r.width + r.height === 0
+      if (!pin.hidden) {
+        pin.style.transform = `translate(${r.left + (r.width * (t.pos_x ?? 0)) / 100}px, ${r.top + (r.height * (t.pos_y ?? 0)) / 100}px)`
+      }
+    }
+    const target = state.picking ? hoverEl : (composer?.target ?? (Date.now() < flashUntil ? flashEl : null))
+    const r = target?.isConnected ? target.getBoundingClientRect() : null
+    hl.hidden = !r
+    if (r) Object.assign(hl.style, { transform: `translate(${r.left}px, ${r.top}px)`, width: `${r.width}px`, height: `${r.height}px` })
+  }
+
+  function flash(el) {
+    flashEl = el
+    flashUntil = Date.now() + 1600
+    position()
+    setTimeout(position, 1650)
+  }
+
+  function focusThread(id) {
+    const t = state.threads.find((x) => x.id === id)
+    if (!t) return
+    Object.assign(state, { open: true, active: id, filter: t.status })
+    render()
+    root.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' })
+    const el = findAnchor(document, t)
+    if (el) (el.scrollIntoView({ block: 'center', behavior: 'smooth' }), flash(el))
+  }
+
+  // ---- render ----
+  function render() {
+    const open = state.threads.filter((t) => t.status === 'open')
+    const resolved = state.threads.filter((t) => t.status === 'resolved')
+
+    // While picking, the panel steps aside so every element is clickable; the fab becomes "cancel".
+    fab.hidden = state.open && !state.picking
+    fab.title = state.picking ? T.cancelPick : T.title
+    fab.classList.toggle('picking', state.picking)
+    fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', open.length > 0 && h('span', { class: 'count' }, open.length))))
+
+    pins = open.map((t, i) => ({
+      t,
+      pin: h(
+        'button',
+        { class: `pin${t.id === state.active ? ' active' : ''}`, title: `${t.author}: ${t.body}`.slice(0, 140), onclick: () => focusThread(t.id) },
+        i + 1,
+      ),
+    }))
+    pinLayer.replaceChildren(...pins.map((p) => p.pin))
+    position()
+
+    panel.hidden = !state.open || state.picking
+    if (panel.hidden) return
+
+    // Keep what the user is typing: focus, caret and list scroll survive the rebuild.
+    const focused = root.activeElement
+    const key = focused?.dataset?.key
+    const caret = [focused?.selectionStart, focused?.selectionEnd]
+    const scroll = panel.querySelector('.list')?.scrollTop ?? 0
+
+    const tab = (f, label) =>
+      h('button', { class: state.filter === f ? 'on' : '', onclick: () => ((state.filter = f), render()) }, label)
+    const shown = state.filter === 'open' ? open : resolved
+    const list = h(
+      'div',
+      { class: 'list' },
+      shown.length ? shown.map((t) => card(t, open.indexOf(t))) : h('p', { class: 'empty' }, state.filter === 'open' ? T.emptyOpen : T.emptyResolved),
+    )
+    panel.replaceChildren(
+      ...nodes(
+      h(
+        'header',
+        {},
+        h('strong', {}, T.title),
+        h('button', { class: 'icon', title: T.close, onclick: () => ((state.open = false), setPicking(false)) }, '×'),
+      ),
+      h(
+        'div',
+        { class: 'toolbar' },
+        h('button', { class: 'primary', onclick: () => setPicking(!state.picking) }, state.picking ? T.cancelPick : T.add),
+        h('div', { class: 'tabs' }, tab('open', `${T.open} (${open.length})`), tab('resolved', `${T.resolved} (${resolved.length})`)),
+      ),
+      state.error && h('div', { class: 'error' }, state.error),
+      list,
+      ),
+    )
+    list.scrollTop = scroll
+    const again = key && root.querySelector(`[data-key="${CSS.escape(key)}"]`)
+    if (again) (again.focus(), again.setSelectionRange?.(caret[0], caret[1]))
+  }
+
+  function card(t, index) {
+    const nameInput = nameField(`name:${t.id}`)
+    const ta = h('textarea', {
+      rows: 2,
+      maxlength: 5000,
+      placeholder: T.replyPh,
+      'data-key': `reply:${t.id}`,
+      value: drafts.get(t.id) ?? '',
+      oninput: (e) => drafts.set(t.id, e.target.value),
+    })
+    const send = act(async () => {
+      if (!ta.value.trim()) return ta.focus()
+      await api('', { method: 'POST', body: { parent_id: t.id, author: author(nameInput), body: ta.value } })
+      drafts.delete(t.id)
+    })
+    ta.addEventListener('keydown', submitOnCmdEnter(send))
+    const toggle = act(() => api(`/${t.id}`, { method: 'PATCH', body: { status: t.status === 'open' ? 'resolved' : 'open' } }))
+
+    return h(
+      'article',
+      {
+        class: `card${t.id === state.active ? ' active' : ''}`,
+        'data-id': t.id,
+        onclick: (e) => e.target.closest('textarea, input, button') || focusThread(t.id),
+      },
+      h(
+        'div',
+        { class: 'meta' },
+        h('span', { class: `num${t.status === 'open' ? '' : ' done'}` }, t.status === 'open' ? index + 1 : '✓'),
+        h('b', {}, t.author),
+        h('time', { datetime: t.created_at, title: new Date(t.created_at).toLocaleString() }, ago(t.created_at)),
+      ),
+      h('p', { class: 'body' }, t.body),
+      t.text_snippet && h('p', { class: 'snippet', title: t.text_snippet }, `“${t.text_snippet}”`),
+      !findAnchor(document, t) && h('p', { class: 'warn' }, T.missing),
+      t.replies.map((r) =>
+        h(
+          'div',
+          { class: `reply${r.by_agent ? ' agent' : ''}` },
+          h('div', { class: 'meta' }, r.by_agent ? '🤖' : null, h('b', {}, r.author), h('time', { datetime: r.created_at }, ago(r.created_at))),
+          h('p', { class: 'body' }, r.body),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'replybox' },
+        nameInput,
+        ta,
+        h(
+          'div',
+          { class: 'row' },
+          h('button', { onclick: toggle }, t.status === 'open' ? T.resolve : T.reopen),
+          h('button', { class: 'primary', onclick: send }, T.reply),
+        ),
+      ),
+    )
+  }
+
+  // ---- polling + SPA navigation ----
+  setInterval(() => {
+    attach()
+    const url = pageKey(location)
+    if (url !== state.url) {
+      Object.assign(state, { url, threads: [], active: null })
+      lastJson = ''
+      closeComposer()
+      render()
+      load()
+    }
+    position() // layout can shift without scroll (HMR, async content)
+  }, 1000)
+  setInterval(() => document.hidden || load(), POLL_MS)
+  document.addEventListener('visibilitychange', () => document.hidden || load())
+
+  render()
+  load()
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') mount()

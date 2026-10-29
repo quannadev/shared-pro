@@ -1,0 +1,9 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# deps, local data, tooling, throwaway spike apps (recreate with create-next-app / create-vite)
+node_modules/
+.shared-pro/
+.claude-flow/
+spike/
+.DS_Store

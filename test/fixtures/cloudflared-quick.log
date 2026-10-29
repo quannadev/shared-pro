@@ -1,0 +1,14 @@
+2026-10-29T12:30:12Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guara
+2026-10-29T12:30:12Z INF Requesting new quick Tunnel on trycloudflare.com...
+2026-10-29T12:30:17Z INF +--------------------------------------------------------------------------------------------+
+2026-10-29T12:30:17Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-10-29T12:30:17Z INF |  https://pushing-snow-hosted-fragrances.trycloudflare.com                                  |
+2026-10-29T12:30:17Z INF +--------------------------------------------------------------------------------------------+
+2026-10-29T12:30:17Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp /etc/cloudflared /usr/local/etc/cloudflared]
+2026-10-29T12:30:17Z INF GOOS: darwin, GOVersion: go1.27.3, GoArch: arm64
+2026-10-29T12:30:17Z INF Settings: map[ha-connections:1 protocol:quic url:http://localhost:3100]
+2026-10-29T12:30:17Z INF cloudflared will not automatically update if installed by a package manager.
+2026-10-29T12:30:18Z INF Initial protocol quic
+2026-10-29T12:30:18Z INF Starting metrics server on 127.0.0.1:20243/metrics
+2026-10-29T12:30:18Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveID(65074) CurveP256] connIndex=0 event=0 ip=198.41.200.53
+2026-10-29T12:30:18Z INF Registered tunnel connection connIndex=0 connection=4e58a1e2-fc01-4fa0-a1ce-b12364f7716d event=0 ip=198.41.200.53 location=hkg10 protocol=quic
