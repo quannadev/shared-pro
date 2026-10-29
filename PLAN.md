@@ -216,3 +216,15 @@ Tài khoản/đăng nhập, multi-project server, deploy cloud, mobile app, @men
 - Đánh đổi: token hiện trên thanh địa chỉ và trong ảnh chụp màn hình. Thu hồi bằng cách xóa `.shared-pro/token`.
 - Test 60/60. Chạy thật: browser giữ `?sp=`, POST 201, không lỗi hydration; URL copy mở trong trình duyệt mới (cookie jar trống) → 200 + cookie → API 200; qua tunnel thật: 200 (không còn 302) + cookie → API 200.
 - Ghi chú: Cloudflare trả `429` khi tạo quá nhiều Quick Tunnel liên tiếp; CLI báo lỗi rõ và thoát code 1.
+
+### Phase 8 — Các phần còn lại ✅ XONG (2026-10-29)
+Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả repo 84/84.
+- **Ảnh chụp màn hình** (`b8f0234`): widget tải `modern-screenshot` (phục vụ cùng origin, chỉ tải khi góp ý), chụp khung nhìn kèm khung đỏ, upload sau khi gửi góp ý. API: chỉ JPEG/PNG (kiểm tra magic bytes), ≤3MB, chỉ thread gốc, upload một lần. MCP `get_comment` trả ảnh dạng image.
+  - Phát hiện và sửa khi xem ảnh thật: trang tối bị chụp trên nền trắng (đã lấy màu nền của `html`/`body`); một lần capture mất 30s vì chờ `img.decode()` ở tab nền (đã giới hạn chờ 3s mỗi ảnh). Đo được: ảnh hiện ra sau 364ms.
+- **Tất cả trang** (`bc7f2bf`): xem góp ý của mọi trang, bấm để chuyển trang và mở đúng thread (sessionStorage). Pin và số đếm vẫn chỉ tính trang hiện tại.
+- **Tìm lại phần tử** (`831c293`): kiểm tra text của phần tử theo selector; DOM xê dịch thì tìm phần tử duy nhất có đúng text đó; text đổi do chính bản sửa thì giữ phần tử theo selector. Cache theo thread, xóa khi DOM đổi. Đã thử thật: chèn link mới qua HMR, selector cũ trỏ sang link mới nhưng pin vẫn đúng chỗ.
+- **Khoanh vùng** (`324742e`): kéo chuột hơn 6px là khoanh vùng; neo vào phần tử nhỏ nhất chứa vùng; lưu % (`area_w/area_h`, migrate DB cũ); vùng được viền khi chọn; ảnh chụp và MCP đều mô tả vùng.
+  - **Bug thật tìm ra**: hai process mở cùng một DB cũ cùng lúc thì crash `database is locked` (do busy timeout đặt sau PRAGMA WAL) hoặc trùng cột khi migrate. Đã sửa: timeout đặt ngay trong constructor, migrate trong `BEGIN IMMEDIATE`. Có test với 6 process song song.
+- **Named tunnel** (`52d51e5`): `--tunnel-name` + `--hostname`, lệnh `cloudflared tunnel --url … run NAME` (thứ tự tham số kiểm theo `--help` thật). Chưa chạy trọn vẹn trên tài khoản Cloudflare thật.
+- **Build** (`5408969`): `scripts/build.ts` strip type ra `dist/`, `bin` trỏ `dist/cli.js`, `prepare` tự build. `npm pack` cài vào project khác chạy được, không có ExperimentalWarning.
+

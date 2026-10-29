@@ -20,10 +20,13 @@ AI Agent ◄─stdio─ shared-pro mcp
 
 ## Tính năng
 
-- **Một lệnh**: chạy proxy, tự mở Cloudflare Quick Tunnel, in ra share link đầy đủ.
-- **Góp ý trực quan**: chọn phần tử trên trang, pin đánh số đặt đúng điểm click, có thread trả lời. Chỉ AI Agent được đánh dấu xong, người review có thể mở lại.
+- **Một lệnh**: chạy proxy, tự mở Cloudflare Tunnel (Quick Tunnel, hoặc named tunnel với URL cố định), in ra share link đầy đủ.
+- **Góp ý trực quan**: click chọn một phần tử, hoặc **kéo chuột khoanh một vùng**. Pin đánh số đặt đúng chỗ, có thread trả lời. Chỉ AI Agent được đánh dấu xong, người review có thể mở lại.
+- **Tự chụp màn hình**: mỗi góp ý kèm ảnh khung nhìn của người review, có khung đỏ quanh phần tử/vùng đã chọn. AI Agent nhận ảnh qua MCP.
+- **Xem mọi trang**: chế độ *Tất cả trang* liệt kê góp ý của cả app, bấm vào là chuyển tới đúng trang và đúng góp ý.
+- **Pin bám đúng chỗ**: khi DOM đổi (kể cả do chính AI sửa), pin tìm lại phần tử theo text thay vì nhảy sang phần tử bên cạnh.
 - **Realtime**: góp ý của người khác và reply của AI hiện ra sau khoảng 0,6 giây (đo thật qua tunnel), không mất nội dung đang gõ.
-- **Cho AI Agent**: 4 tool MCP để liệt kê, đọc chi tiết (selector, text, HTML của phần tử), trả lời và resolve. Reply của agent có badge 🤖.
+- **Cho AI Agent**: 4 tool MCP để liệt kê, đọc chi tiết (selector, text, HTML của phần tử, vùng, ảnh chụp), trả lời và resolve. Reply của agent có badge 🤖.
 - **Không đụng app**: widget nằm trong Shadow DOM, HMR của Vite/Next vẫn chạy qua tunnel, streaming SSR không bị buffer ở proxy.
 - **Có kiểm soát truy cập**: share token, chống XSS, chống CSRF, chặn reviewer giả danh agent, bọc nội dung góp ý để giảm rủi ro prompt injection.
 
@@ -31,7 +34,7 @@ AI Agent ◄─stdio─ shared-pro mcp
 
 ## Yêu cầu
 
-- Node.js **≥ 22.18** (chạy TypeScript trực tiếp và dùng `node:sqlite` có sẵn, không cần bước build)
+- Node.js **≥ 22.18** (dùng `node:sqlite` có sẵn; khi phát triển chạy thẳng file TypeScript)
 - [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/): `brew install cloudflared`
 
 ## Cài đặt
@@ -39,11 +42,13 @@ AI Agent ◄─stdio─ shared-pro mcp
 ```bash
 git clone https://github.com/quannadev/shared-pro.git
 cd shared-pro
-npm install
+npm install     # tự build ra dist/ (script prepare)
 npm link        # tạo lệnh `shared-pro` toàn cục
 ```
 
-> Chưa publish lên npm. Node không chạy file `.ts` nằm trong `node_modules`, nên `npx shared-pro` hoặc `npm install shared-pro` sẽ chưa dùng được. `npm link` thì được vì nó trỏ symlink về thư mục clone. Không muốn link thì chạy thẳng `node /đường/dẫn/shared-pro/src/cli.ts …`.
+- **Chưa publish lên npm** (tên `shared-pro` vẫn còn trống). Gói đã sẵn sàng: `npm pack` ra 9 file (28,8kB), cài vào project khác và chạy được từ `node_modules`.
+- Không muốn link thì chạy thẳng `node /đường/dẫn/shared-pro/dist/cli.js …`.
+- `npx github:quannadev/shared-pro` cần npm chạy script `prepare` của gói cài từ git. npm bản mới có thể chặn script này nếu chưa được duyệt, nên chưa đảm bảo chạy được.
 
 ## Bắt đầu nhanh
 
@@ -83,14 +88,47 @@ shared-pro mcp [--dir .]          MCP server qua stdio cho AI Agent
 | `--public` | tắt | Không dùng token, ai có URL cũng xem và viết góp ý được |
 | `--no-tunnel` | | Chỉ chạy proxy ở local, không mở cloudflared |
 | `--cloudflared` | `cloudflared` | Đường dẫn tới binary cloudflared nếu không có trong `PATH` |
+| `--tunnel-name` | | Dùng named tunnel của bạn (URL cố định) thay cho Quick Tunnel. Đi kèm `--hostname` |
+| `--hostname` | | Tên miền đã trỏ vào named tunnel đó, ví dụ `review.example.com` |
+
+### URL cố định với named tunnel
+
+Quick Tunnel đổi URL mỗi lần chạy. Muốn link dùng được lâu dài, tạo named tunnel trên tên miền của bạn (cần tài khoản Cloudflare, làm một lần):
+
+```bash
+cloudflared tunnel login
+```
+
+```bash
+cloudflared tunnel create qtw-review
+```
+
+```bash
+cloudflared tunnel route dns qtw-review review.example.com
+```
+
+Sau đó mỗi lần chạy:
+
+```bash
+shared-pro --target 3000 --path /qtw-project-manager --tunnel-name qtw-review --hostname review.example.com
+```
+
+Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Named tunnel cũng không bị giới hạn như Quick Tunnel (không hỗ trợ SSE, tối đa 200 request đồng thời, có thể báo `429` khi tạo quá nhiều).
+
+> Phần này mới được kiểm tra với cloudflared giả lập và với cloudflared thật tới bước xác thực, chưa chạy trọn vẹn trên một tài khoản Cloudflare thật.
 
 ## Hướng dẫn cho người review
 
 1. Mở share link **ngay trong trình duyệt sẽ dùng để góp ý** (Safari, Chrome…). Trình duyệt nhận cookie từ token trong link. `?sp=…` vẫn nằm trên thanh địa chỉ, nên copy URL hoặc bấm "Mở trong Safari" từ Zalo/Messenger vẫn mang theo mã.
 2. Bấm nút **💬** ở góc phải dưới để mở bảng góp ý.
-3. Bấm **+ Thêm góp ý** (hoặc phím **C** khi bảng đang mở). Rê chuột để thấy phần tử được viền xanh, rồi click vào phần tử muốn góp ý. Trong chế độ này click không kích hoạt app: link không chuyển trang, nút không chạy.
+3. Bấm **+ Thêm góp ý** (hoặc phím **C** khi bảng đang mở). Có hai cách chọn:
+   - **Click** vào một phần tử. Phần tử dưới chuột được viền xanh.
+   - **Kéo chuột** để khoanh một vùng, dùng khi góp ý về khoảng cách hay một cụm phần tử. Chỉ hỗ trợ chuột; trên điện thoại thì chạm để chọn phần tử.
+
+   Trong chế độ này click không kích hoạt app: link không chuyển trang, nút không chạy. Ảnh chụp màn hình được chụp tự động.
 4. Nhập tên (chỉ hỏi lần đầu) và nội dung, gửi bằng **⌘/Ctrl + Enter** hoặc nút **Gửi**.
-5. Mỗi góp ý có một pin số trên trang. Click pin hoặc thẻ trong bảng để cuộn tới đúng phần tử.
+5. Mỗi góp ý có một pin số trên trang. Click pin hoặc thẻ trong bảng để cuộn tới đúng phần tử (góp ý dạng vùng thì vùng được viền lại). Thẻ có ảnh thu nhỏ, bấm để xem ảnh lớn.
+   - Chuyển sang **Tất cả trang** để xem góp ý của mọi trang. Bấm một thẻ của trang khác để chuyển tới trang đó, bảng góp ý tự mở đúng thẻ.
 6. Mỗi thread có ô **Trả lời**. Tab **Đang mở / Đã xong** để lọc.
 7. **Chỉ AI Agent được đánh dấu xong** (sau khi đã sửa code), và API cũng chặn người dùng làm việc này. Nếu thấy chưa đạt, bấm **Mở lại** trên thread trong tab *Đã xong*.
 
@@ -109,7 +147,7 @@ claude mcp add shared-pro -- shared-pro mcp --dir "$PWD"
 Muốn cả team dùng chung thì thêm `-s project` để lưu vào `.mcp.json`. Nếu không dùng `npm link`:
 
 ```bash
-claude mcp add shared-pro -- node /đường/dẫn/shared-pro/src/cli.ts mcp --dir "$PWD"
+claude mcp add shared-pro -- node /đường/dẫn/shared-pro/dist/cli.js mcp --dir "$PWD"
 ```
 
 ### Cursor, Claude Desktop và client MCP khác
@@ -119,7 +157,7 @@ claude mcp add shared-pro -- node /đường/dẫn/shared-pro/src/cli.ts mcp --d
   "mcpServers": {
     "shared-pro": {
       "command": "node",
-      "args": ["/đường/dẫn/shared-pro/src/cli.ts", "mcp", "--dir", "/đường/dẫn/project-của-app"]
+      "args": ["/đường/dẫn/shared-pro/dist/cli.js", "mcp", "--dir", "/đường/dẫn/project-của-app"]
     }
   }
 }
@@ -130,7 +168,7 @@ claude mcp add shared-pro -- node /đường/dẫn/shared-pro/src/cli.ts mcp --d
 | Tool | Tham số | Dùng để |
 |---|---|---|
 | `list_comments` | `status` (`open` mặc định / `resolved`), `url?` | Liệt kê thread: id, trang, phần tử, nội dung |
-| `get_comment` | `id` | Chi tiết: selector, text, HTML của phần tử, vị trí click, viewport, các reply |
+| `get_comment` | `id` | Chi tiết: selector, text, HTML của phần tử, vị trí click hoặc vùng đã khoanh, viewport, các reply, và **ảnh chụp màn hình** (gửi dạng ảnh để agent nhìn) |
 | `reply_comment` | `id`, `body` | Trả lời hoặc hỏi lại người review (hiển thị với 🤖) |
 | `resolve_comment` | `id`, `note?` | Đánh dấu xong. Đây là cách **duy nhất** để resolve: API từ trình duyệt trả `403`. `note` được đăng thành reply để người review biết đã đổi gì |
 
@@ -153,9 +191,11 @@ Mọi thứ nằm trong `<dir>/.shared-pro/`. Thư mục này tự tạo `.gitig
 |---|---|
 | `comments.db` (+ `-wal`, `-shm`) | Toàn bộ góp ý |
 | `token` | Share token (quyền `0600`). Được giữ lại sau khi restart nên link đã gửi vẫn dùng được |
+| `shots/<id>.jpg` | Ảnh chụp màn hình của từng góp ý |
 
 - **Đổi token** (thu hồi mọi link đã gửi): xóa `.shared-pro/token` rồi chạy lại.
-- **Xóa sạch góp ý**: xóa `.shared-pro/comments.db*`.
+- **Xóa sạch góp ý**: xóa `.shared-pro/comments.db*` và `.shared-pro/shots/`.
+- **Nâng cấp shared-pro**: DB cũ tự được cập nhật cấu trúc khi chạy bản mới, không mất góp ý. Nhớ khởi động lại cả proxy lẫn MCP: widget luôn lấy bản mới nhất, nhưng server đang chạy vẫn là code cũ.
 
 ## Bảo mật
 
@@ -167,6 +207,7 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 - **XSS**: widget hiển thị nội dung góp ý dạng text (`textContent`), không bao giờ dạng HTML.
 - **CSRF**: API bắt buộc `content-type: application/json` (sai thì trả `415`) và cookie `SameSite=Lax`. Body lớn hơn 64KB trả `413`.
 - **Bảo vệ dev server**: proxy đổi `Origin` sang địa chỉ app chỉ khi `Origin` trùng `Host`. Nhờ vậy HMR của Next chạy qua tunnel, còn trang lạ gọi `localhost:3100` vẫn bị Next chặn như cũ.
+- **Ảnh chụp**: chụp đúng những gì người review đang thấy, nên có thể chứa dữ liệu nhạy cảm hiển thị trên màn hình. Ảnh lưu trên máy bạn và được gửi cho AI Agent (tức là tới nhà cung cấp model) khi agent đọc góp ý. Upload chỉ nhận JPEG/PNG, kiểm tra bằng magic bytes (không bao giờ SVG), tối đa 3MB, mỗi thread một lần, không ghi đè được.
 - MCP chỉ chạy qua stdio. Không có route nào trên proxy cho phép gọi tool agent từ internet.
 
 ## Xử lý sự cố
@@ -179,13 +220,17 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 | Link cũ không mở được | Quick Tunnel đổi URL mỗi lần chạy lại. Góp ý không mất vì được lưu theo đường dẫn, chỉ cần gửi link mới |
 | Trang có `<Suspense>` hiện ra một lần thay vì từng phần | Cloudflare Quick Tunnel tự buffer HTML (tunnel thẳng không qua proxy cũng vậy). Ở local thì streaming vẫn bình thường |
 | Ảnh `/next.svg` của template Next lỗi 404 khi có `basePath` | Lỗi của template (đường dẫn ảnh thiếu `basePath`), không liên quan shared-pro |
-| Pin không hiện, thẻ báo *"Không còn thấy phần tử"* | DOM đã đổi nên selector không còn khớp. Nội dung góp ý và text của phần tử vẫn còn trong thẻ |
+| Pin không hiện, thẻ báo *"Không còn thấy phần tử"* | Phần tử đã bị xóa hoặc đổi cả vị trí lẫn nội dung, nên cả selector lẫn text đều không còn khớp. Nội dung góp ý và ảnh chụp vẫn còn trong thẻ |
+| `quick tunnel provisioning failed with status 429` | Cloudflare giới hạn số Quick Tunnel tạo liên tiếp. Đợi vài phút, hoặc dùng named tunnel |
+| Ảnh chụp thiếu hình, hoặc header cố định bị lệch | Ảnh được dựng lại từ DOM chứ không phải chụp pixel: ảnh từ tên miền khác không cho CORS sẽ trống, header `position: fixed` có thể lệch khi trang đã cuộn |
+| Tính năng mới không chạy sau khi cập nhật | Khởi động lại `shared-pro` (và MCP). Widget tự lấy bản mới nhưng server đang chạy vẫn là code cũ |
 | Phím **C** không có tác dụng | Chỉ hoạt động khi bảng góp ý đang mở, để không cướp phím tắt của app |
 
 ## Phát triển
 
 ```bash
-npm test     # node:test, không cần framework
+npm test        # node:test, không cần framework
+npm run build   # src/*.ts → dist/*.js bằng bộ strip type có sẵn của Node
 ```
 
 ```
@@ -196,15 +241,15 @@ src/store.ts     node:sqlite (WAL), dùng chung cho proxy và MCP
 src/tunnel.ts    spawn cloudflared, chờ URL + kết nối sẵn sàng
 src/mcp.ts       4 tool MCP, bọc nội dung untrusted
 widget/widget.js widget góp ý (JS thuần, ES module, phục vụ nguyên bản)
-test/            proxy, api, store, tunnel (cloudflared giả), widget (happy-dom), mcp (in-memory + stdio)
+scripts/build.ts build ra dist/ (không dependency)
+test/            proxy, api, store, tunnel (cloudflared giả), widget (happy-dom), mcp (in-memory + stdio), build
 ```
 
-Dependency khi chạy chỉ có `@modelcontextprotocol/sdk` và `zod`. Proxy, SQLite, test và chạy TypeScript đều dùng thứ có sẵn trong Node. Thiết kế và lộ trình chi tiết xem [PLAN.md](PLAN.md).
+Dependency khi chạy chỉ có `@modelcontextprotocol/sdk`, `zod` và `modern-screenshot` (bản ESM tự chứa, chỉ được tải khi có người góp ý). Proxy, SQLite, test và build đều dùng thứ có sẵn trong Node. Thiết kế và lộ trình chi tiết xem [PLAN.md](PLAN.md).
 
 ## Chưa làm
 
-- Chụp ảnh màn hình khi góp ý (để agent nhìn thấy).
-- Khoanh vùng tự do bằng cách kéo chuột, thay vì chỉ chọn một phần tử.
-- Tìm lại phần tử theo text khi selector không còn khớp.
-- Named tunnel (URL cố định).
-- Build ra JS để publish lên npm (`npx shared-pro`).
+- Publish lên npm (gói đã sẵn sàng, chỉ cần bỏ `"private": true` rồi `npm publish`).
+- Khoanh vùng bằng thao tác chạm trên điện thoại.
+- Ảnh chụp chính xác header `position: fixed` khi trang đã cuộn.
+- Báo cho dev khi có góp ý mới (chuông terminal hoặc thông báo MCP).
