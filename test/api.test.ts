@@ -188,3 +188,40 @@ test('changes: a held request times out with the same version (client just asks 
   assert.equal((await res.json()).version, version)
   assert.ok(Date.now() - t0 >= 180, 'was actually held')
 })
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 7)])
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(50, 1)])
+const upload = (id: string, body: Buffer, type = 'image/jpeg', headers: Record<string, string> = auth) =>
+  fetch(`${base}/__sp/api/comments/${id}/screenshot`, { method: 'POST', headers: { ...headers, 'content-type': type }, body })
+
+test('screenshot upload: stored once, served back as an image, flagged on the thread', async () => {
+  const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
+  assert.equal((await upload(t.id, JPEG)).status, 201)
+
+  const img = await fetch(`${base}/__sp/api/comments/${t.id}/screenshot`, { headers: auth })
+  assert.equal(img.status, 200)
+  assert.equal(img.headers.get('content-type'), 'image/jpeg')
+  assert.equal(img.headers.get('x-content-type-options'), 'nosniff')
+  assert.deepEqual(Buffer.from(await img.arrayBuffer()), JPEG)
+  assert.equal(store.get(t.id)!.screenshot, 'image/jpeg')
+
+  assert.equal((await upload(t.id, JPEG)).status, 409, 'nobody can overwrite it later')
+})
+
+test('screenshot upload accepts PNG too', async () => {
+  const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
+  assert.equal((await upload(t.id, PNG, 'image/png')).status, 201)
+  assert.equal(store.get(t.id)!.screenshot, 'image/png')
+})
+
+test('screenshot upload is validated at the boundary', async () => {
+  const t = await (await post({ url: '/p', author: 'A', body: 'x' })).json()
+  const r = await (await post({ parent_id: t.id, author: 'B', body: 'reply' })).json()
+  assert.equal((await upload(t.id, JPEG, 'image/jpeg', {})).status, 401)
+  assert.equal((await upload(t.id, Buffer.from('<svg onload=alert(1)>'), 'image/svg+xml')).status, 415)
+  assert.equal((await upload(t.id, Buffer.from('<html>not an image</html>'), 'image/jpeg')).status, 400, 'magic bytes checked')
+  assert.equal((await upload(t.id, Buffer.concat([JPEG, Buffer.alloc(3 * 1024 * 1024)]))).status, 413)
+  assert.equal((await upload('missing', JPEG)).status, 404)
+  assert.equal((await upload(r.id, JPEG)).status, 404, 'only on the thread, not on replies')
+  assert.equal((await fetch(`${base}/__sp/api/comments/${r.id}/screenshot`, { headers: auth })).status, 404)
+})

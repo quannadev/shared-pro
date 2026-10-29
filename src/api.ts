@@ -1,6 +1,6 @@
 import type http from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
-import type { NewComment, Status, Store } from './store.ts'
+import type { NewComment, ShotType, Status, Store } from './store.ts'
 
 const MAX_BODY = 64 * 1024
 const STATUSES: Status[] = ['open', 'resolved']
@@ -37,20 +37,41 @@ function hasToken(req: http.IncomingMessage, token: string | undefined) {
   return !!m && sameSecret(m[1], token)
 }
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
-  if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'content-type must be application/json')
-  if (Number(req.headers['content-length']) > MAX_BODY) throw new HttpError(413, 'body too large')
+async function readBody(req: http.IncomingMessage, max: number): Promise<Buffer> {
+  if (Number(req.headers['content-length']) > max) throw new HttpError(413, 'body too large')
   const chunks: Buffer[] = []
   let size = 0
   for await (const c of req as AsyncIterable<Buffer>) {
-    if ((size += c.length) > MAX_BODY) throw new HttpError(413, 'body too large')
+    if ((size += c.length) > max) throw new HttpError(413, 'body too large')
     chunks.push(c)
   }
+  return Buffer.concat(chunks)
+}
+
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'content-type must be application/json')
+  const body = await readBody(req, MAX_BODY)
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    return JSON.parse(body.toString('utf8'))
   } catch {
     return bad('invalid JSON')
   }
+}
+
+const MAX_SHOT = 3 * 1024 * 1024
+// Only raster formats, recognised by their magic bytes: never trust the declared type (SVG would be script).
+const SHOT_MAGIC: [ShotType, number[]][] = [
+  ['image/jpeg', [0xff, 0xd8, 0xff]],
+  ['image/png', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+]
+
+async function readScreenshot(req: http.IncomingMessage): Promise<{ data: Buffer; type: ShotType }> {
+  const declared = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+  if (!SHOT_MAGIC.some(([t]) => t === declared)) throw new HttpError(415, 'screenshot must be image/jpeg or image/png')
+  const data = await readBody(req, MAX_SHOT)
+  const type = SHOT_MAGIC.find(([, magic]) => magic.every((b, i) => data[i] === b))?.[0]
+  if (type !== declared) bad('body is not a valid ' + declared)
+  return { data, type: type! }
 }
 
 function text(o: Record<string, unknown>, k: string, max: number, required = false): string | undefined {
@@ -126,6 +147,24 @@ export async function handleApi(
         changes.waiters.add(reply)
         res.on('close', finish) // client went away (tab closed, navigation): drop the waiter
       })
+    }
+    const shot = /^\/__sp\/api\/comments\/([^/]+)\/screenshot$/.exec(u.pathname)
+    if (shot) {
+      const threadId = decodeURIComponent(shot[1])
+      if (!store.get(threadId)) throw new HttpError(404, 'thread not found')
+      if (req.method === 'GET') {
+        const img = store.screenshot(threadId)
+        if (!img) throw new HttpError(404, 'no screenshot')
+        res.writeHead(200, { 'content-type': img.type, 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=3600' })
+        return res.end(img.data)
+      }
+      if (req.method === 'POST') {
+        // First upload wins (the widget sends it right after creating the thread): nobody can swap it later.
+        if (store.get(threadId)!.screenshot) throw new HttpError(409, 'thread already has a screenshot')
+        const { data, type } = await readScreenshot(req)
+        store.saveScreenshot(threadId, data, type)
+        return send(201, { ok: true })
+      }
     }
     const m = /^\/__sp\/api\/comments(?:\/([^/]+))?$/.exec(u.pathname)
     const id = m?.[1] && decodeURIComponent(m[1])

@@ -22,6 +22,7 @@ const T = {
   cancel: 'Hủy',
   reply: 'Trả lời',
   reopen: 'Mở lại',
+  screenshot: 'Ảnh chụp màn hình lúc góp ý',
   close: 'Đóng',
   noToken: 'Link thiếu mã chia sẻ. Hãy mở lại đúng link được gửi cho bạn (có ?sp=…).',
 }
@@ -69,6 +70,13 @@ export function describe(el, x, y) {
     pos_x: pct(x, r.left, r.width),
     pos_y: pct(y, r.top, r.height),
   }
+}
+
+/** The page colour usually lives on <html> or <body>, which a DOM capture does not paint by itself (dark themes!). */
+export function pageBackground(doc) {
+  const view = doc.defaultView
+  const isClear = (c) => !c || c === 'transparent' || /^rgba\(\s*0,\s*0,\s*0,\s*0\s*\)$/.test(c)
+  return [doc.documentElement, doc.body].map((el) => view.getComputedStyle(el).backgroundColor).find((c) => !isClear(c)) ?? '#ffffff'
 }
 
 export function findAnchor(doc, thread) {
@@ -147,6 +155,7 @@ time { color: #6e7781; font-size: 12px; margin-left: auto; }
 p { margin: 0; } .body { white-space: pre-wrap; word-break: break-word; }
 .snippet { color: #6e7781; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warn { color: #9a6700; font-size: 12px; }
+.shot img { display: block; width: 100%; max-height: 160px; object-fit: cover; object-position: top; border: 1px solid #d0d7de; border-radius: 6px; }
 .reply { border-left: 3px solid #eaeef2; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .reply.agent { border-left-color: #8250df; }
 .replybox { display: flex; flex-direction: column; gap: 6px; cursor: default; }
@@ -286,6 +295,34 @@ function mount() {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.preventDefault(), send())
   }
 
+  // ---- screenshot ----
+  /** JPEG of the reviewer's viewport with a red box on the clicked element, or null if capture fails. */
+  async function captureView(target) {
+    try {
+      const box = target.getBoundingClientRect()
+      const { domToCanvas } = await import('/__sp/vendor/modern-screenshot.js')
+      // ponytail: renders the DOM, not pixels: cross-origin images without CORS come out blank, and fixed
+      // headers can be offset when the page is scrolled. Good enough to show the agent what was meant.
+      const canvas = await domToCanvas(document.documentElement, {
+        width: innerWidth,
+        height: innerHeight,
+        scale: 1,
+        backgroundColor: pageBackground(document),
+        timeout: 3000, // per image: default 30s; a stuck decode (seen in background tabs) must not hold the upload
+        filter: (node) => node !== host,
+        style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
+      })
+      const ctx = canvas.getContext('2d')
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = 3
+      ctx.strokeRect(box.left - 2, box.top - 2, box.width + 4, box.height + 4)
+      return await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8))
+    } catch (e) {
+      console.warn('[shared-pro] screenshot failed', e)
+      return null
+    }
+  }
+
   // ---- comment mode ----
   function setPicking(on) {
     state.picking = on
@@ -340,6 +377,7 @@ function mount() {
   function openComposer(target, x, y) {
     closeComposer()
     const info = describe(target, x, y)
+    const shot = captureView(target) // starts now, so it shows exactly what was clicked; runs while they type
     const name = nameField('name:new')
     const ta = h('textarea', { rows: 3, maxlength: 5000, placeholder: T.placeholder })
     const send = act(async () => {
@@ -348,6 +386,8 @@ function mount() {
       const t = await api('', { method: 'POST', body: { url: state.url, ...info, viewport, author: author(name), body: ta.value } })
       closeComposer()
       Object.assign(state, { open: true, filter: 'open', active: t.id })
+      // Best effort: the comment is already saved; a failed capture/upload only means no picture.
+      shot.then((blob) => blob && fetch(`${API}/${t.id}/screenshot`, { method: 'POST', headers: { 'content-type': blob.type }, body: blob }))
     })
     ta.addEventListener('keydown', submitOnCmdEnter(send))
     const form = h(
@@ -506,6 +546,9 @@ function mount() {
       h('p', { class: 'body' }, t.body),
       t.text_snippet && h('p', { class: 'snippet', title: t.text_snippet }, `“${t.text_snippet}”`),
       !findAnchor(document, t) && h('p', { class: 'warn' }, T.missing),
+      t.screenshot &&
+        h('a', { href: `${API}/${t.id}/screenshot`, target: '_blank', rel: 'noopener', class: 'shot' },
+          h('img', { src: `${API}/${t.id}/screenshot`, alt: T.screenshot, loading: 'lazy' })),
       t.replies.map((r) =>
         h(
           'div',

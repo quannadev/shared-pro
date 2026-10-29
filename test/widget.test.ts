@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { cssPath, describe, findAnchor, h, nodes, pageKey } from '../widget/widget.js'
+import { cssPath, describe, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -85,4 +85,15 @@ test('findAnchor returns the element, or null for missing/invalid selectors', ()
 test('pageKey is pathname + search (keeps basePath, drops hash and the share token)', () => {
   assert.equal(pageKey(new URL('https://x.trycloudflare.com/qtw-project-manager/tasks?tab=2#top')), '/qtw-project-manager/tasks?tab=2')
   assert.equal(pageKey(new URL('https://x/a?sp=secret&tab=1')), '/a?tab=1')
+})
+
+test('pageBackground: <html> colour, else <body>, else white (so dark pages are not captured on white)', () => {
+  const doc = page('')
+  doc.documentElement.style.backgroundColor = 'rgb(22, 23, 29)'
+  assert.equal(pageBackground(doc), 'rgb(22, 23, 29)')
+  doc.documentElement.style.backgroundColor = 'transparent'
+  doc.body.style.backgroundColor = 'rgb(1, 2, 3)'
+  assert.equal(pageBackground(doc), 'rgb(1, 2, 3)')
+  doc.body.style.backgroundColor = ''
+  assert.equal(pageBackground(doc), '#ffffff')
 })

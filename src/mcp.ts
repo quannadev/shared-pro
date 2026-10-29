@@ -26,7 +26,7 @@ function summary(t: Thread) {
   return [
     `- id: ${t.id}`,
     `  url: ${neutral(t.url)}`,
-    `  element: ${element(t)}`,
+    `  element: ${element(t)}${t.screenshot ? ' · 📷 screenshot' : ''}`,
     `  status: ${t.status} · ${t.replies.length === 1 ? '1 reply' : `${t.replies.length} replies`} · ${t.created_at}`,
     `  ${say(t)}`,
   ].join('\n')
@@ -42,6 +42,7 @@ function detail(t: Thread) {
     `element text: ${neutral(t.text_snippet) || '(none)'}`,
     t.pos_x != null && `clicked at: ${t.pos_x}% x ${t.pos_y}% of the element`,
     t.source_hint && `source hint: ${neutral(t.source_hint)}`,
+    t.screenshot && 'screenshot: attached (the reviewer\'s viewport; the red box marks the element they clicked)',
     t.html_snippet && `element html:\n\`\`\`html\n${neutral(t.html_snippet)}\n\`\`\``,
     '',
     'comment:',
@@ -88,13 +89,17 @@ export function createMcpServer(store: Store) {
     'get_comment',
     {
       title: 'Get a review comment thread',
-      description: 'Full thread: element selector, text and HTML snippet, click position, replies.',
+      description: 'Full thread: element selector, text and HTML snippet, click position, replies, and the reviewer\'s screenshot when there is one.',
       inputSchema: { id: z.string().max(100).describe('Thread id from list_comments') },
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
       const t = store.get(id)
-      return t ? text(`${WARNING}\n\n${detail(t)}`) : notFound(id)
+      if (!t) return notFound(id)
+      const shot = store.screenshot(id)
+      const out = text(`${WARNING}\n\n${detail(t)}`)
+      if (!shot) return out
+      return { content: [...out.content, { type: 'image' as const, data: shot.data.toString('base64'), mimeType: shot.type }] }
     },
   )
 

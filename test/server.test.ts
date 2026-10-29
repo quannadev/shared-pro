@@ -139,3 +139,10 @@ test('websocket upgrade is tunnelled both ways', async () => {
   sock.destroy()
   assert.match(buf, /^HTTP\/1.1 101/)
 })
+
+test('screenshot library is served same-origin for the widget to lazy-load', async () => {
+  const res = await fetch(`${base}/__sp/vendor/modern-screenshot.js`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type')!, /javascript/)
+  assert.match(await res.text(), /export \{[^}]*domToCanvas/)
+})

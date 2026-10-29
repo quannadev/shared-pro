@@ -1,6 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 export type Status = 'open' | 'resolved'
@@ -21,7 +22,9 @@ export type Comment = {
   status: Status
   created_at: string
   resolved_at: string | null
+  screenshot: ShotType | null // set when the reviewer's browser uploaded a screenshot of what they saw
 }
+export type ShotType = 'image/jpeg' | 'image/png'
 export type Thread = Comment & { replies: Comment[] }
 export type NewComment = Partial<
   Pick<Comment, 'parent_id' | 'url' | 'selector' | 'text_snippet' | 'html_snippet' | 'source_hint' | 'pos_x' | 'pos_y' | 'viewport'>
@@ -39,7 +42,8 @@ CREATE TABLE IF NOT EXISTS comments (
   by_agent INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
   created_at TEXT NOT NULL,
-  resolved_at TEXT
+  resolved_at TEXT,
+  screenshot TEXT
 );
 CREATE INDEX IF NOT EXISTS comments_url ON comments(url);
 CREATE INDEX IF NOT EXISTS comments_parent ON comments(parent_id);`
@@ -49,6 +53,11 @@ export function openStore(file: string) {
   const db = new DatabaseSync(file)
   // WAL + busy_timeout: proxy and MCP server are separate processes writing the same file.
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000; PRAGMA foreign_keys = ON; ${SCHEMA}`)
+  // Migrate DBs created before screenshots existed.
+  const columns = (db.prepare('PRAGMA table_info(comments)').all() as { name: string }[]).map((c) => c.name)
+  if (!columns.includes('screenshot')) db.exec('ALTER TABLE comments ADD COLUMN screenshot TEXT')
+  const shotsDir = file === ':memory:' ? mkdtempSync(join(tmpdir(), 'sp-shots-')) : join(dirname(file), 'shots')
+  const shotFile = (id: string, type: ShotType) => join(shotsDir, `${id}.${type === 'image/png' ? 'png' : 'jpg'}`)
 
   const row = (id: string) => db.prepare('SELECT * FROM comments WHERE id = ?').get(id) as Comment | undefined
   const withReplies = (t: Comment): Thread => ({
@@ -106,6 +115,24 @@ export function openStore(file: string) {
       if (!changes) return undefined
       changed()
       return this.get(id)
+    },
+
+    /** Stores the image file next to the DB (`shots/<id>.jpg|png`) and flags the comment. */
+    saveScreenshot(id: string, data: Buffer, type: ShotType) {
+      mkdirSync(shotsDir, { recursive: true })
+      writeFileSync(shotFile(id, type), data)
+      db.prepare('UPDATE comments SET screenshot = ? WHERE id = ?').run(type, id)
+      changed()
+    },
+
+    screenshot(id: string): { data: Buffer; type: ShotType } | undefined {
+      const type = row(id)?.screenshot
+      if (!type) return undefined
+      try {
+        return { data: readFileSync(shotFile(id, type)), type }
+      } catch {
+        return undefined // file deleted by hand: treat as no screenshot
+      }
     },
 
     /** Calls `cb` after any write, ours or another process's. Returns an unsubscribe function. */

@@ -130,3 +130,17 @@ test('resolve_comment marks resolved and adds the note as an agent reply', async
   const reply = thread.replies[0]
   assert.equal((await call('resolve_comment', { id: reply.id })).isError, true)
 })
+
+test('get_comment attaches the screenshot as an image the agent can look at; list marks it', async () => {
+  const t = seed()
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9])
+  store.saveScreenshot(t.id, jpeg, 'image/jpeg')
+  const res = (await client.callTool({ name: 'get_comment', arguments: { id: t.id } })) as {
+    content: { type: string; text?: string; data?: string; mimeType?: string }[]
+  }
+  const img = res.content.find((c) => c.type === 'image')!
+  assert.equal(img.mimeType, 'image/jpeg')
+  assert.deepEqual(Buffer.from(img.data!, 'base64'), jpeg)
+  assert.match(res.content[0].text!, /screenshot: attached/)
+  assert.match((await call('list_comments')).text, /📷/)
+})

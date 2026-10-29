@@ -6,6 +6,8 @@ import type { Store } from './store.ts'
 
 const SCRIPT = '<script type="module" src="/__sp/widget.js"></script>'
 const WIDGET = new URL('../widget/widget.js', import.meta.url)
+// Self-contained ESM build (no imports), lazy-loaded by the widget only when someone actually comments.
+const SCREENSHOT_LIB = new URL(import.meta.resolve('modern-screenshot'))
 const HOP = ['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-connection', 'te', 'trailer']
 
 export function createProxy({ target, store, token }: { target: string; store: Store; token?: string }) {
@@ -28,6 +30,10 @@ export function createProxy({ target, store, token }: { target: string; store: S
     const cookie = token && shareCookie(req, token)
     if (req.url?.startsWith('/__sp/')) {
       if (req.url.startsWith('/__sp/api/')) return void handleApi(req, res, store, token, changes)
+      if (req.url.startsWith('/__sp/vendor/modern-screenshot.js')) {
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' })
+        return res.end(readFileSync(SCREENSHOT_LIB))
+      }
       if (req.url.startsWith('/__sp/widget.js')) {
         // Read per request: tiny file, and edits show up on reload without restarting the proxy.
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' })
