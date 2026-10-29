@@ -118,3 +118,15 @@ test('CLI on a busy port exits 1 with a readable message, not a stack trace', as
   assert.match(stderr, new RegExp(`port ${port} is already in use`))
   assert.doesNotMatch(stderr, /node:events|Unhandled/)
 })
+
+test('CLI with an unknown flag or missing value prints a short error + usage and exits 2', async () => {
+  for (const args of [['--tagret', '3000'], ['--port']]) {
+    const cli = spawn(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), ...args])
+    let stderr = ''
+    cli.stderr.on('data', (d) => (stderr += d))
+    const [code] = await once(cli, 'exit')
+    assert.equal(code, 2, args.join(' '))
+    assert.match(stderr, /^shared-pro: .+\nusage:/, args.join(' '))
+    assert.doesNotMatch(stderr, /node:internal|ERR_PARSE_ARGS|\n\s+at \S+ \(/, args.join(' '))
+  }
+})

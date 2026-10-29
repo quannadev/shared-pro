@@ -14,24 +14,33 @@ const USAGE = `usage:
   shared-pro [start] --target 3000 [--port 3100] [--path /base] [--dir .] [--public] [--no-tunnel] [--cloudflared bin]
   shared-pro mcp [--dir .]      MCP server on stdio for AI agents (reads <dir>/.shared-pro/comments.db)`
 
-const { values, positionals } = parseArgs({
-  allowNegative: true,
-  allowPositionals: true,
-  options: {
-    target: { type: 'string', default: '3000' },
-    port: { type: 'string', default: '3100' },
-    dir: { type: 'string', default: process.cwd() },
-    path: { type: 'string', default: '/' }, // page the share link opens, e.g. your Next basePath
-    public: { type: 'boolean', default: false },
-    tunnel: { type: 'boolean', default: true },
-    cloudflared: { type: 'string', default: 'cloudflared' },
-  },
-})
-const command = positionals[0] ?? 'start'
-if (!['start', 'mcp'].includes(command) || positionals.length > 1) {
-  console.error(USAGE)
+const usageError = (msg: string): never => {
+  console.error(`shared-pro: ${msg}\n${USAGE}`)
   process.exit(2)
 }
+
+function parse() {
+  try {
+    return parseArgs({
+      allowNegative: true,
+      allowPositionals: true,
+      options: {
+        target: { type: 'string', default: '3000' },
+        port: { type: 'string', default: '3100' },
+        dir: { type: 'string', default: process.cwd() },
+        path: { type: 'string', default: '/' }, // page the share link opens, e.g. your Next basePath
+        public: { type: 'boolean', default: false },
+        tunnel: { type: 'boolean', default: true },
+        cloudflared: { type: 'string', default: 'cloudflared' },
+      },
+    })
+  } catch (e) {
+    return usageError((e as Error).message) // typo'd or value-less flag: short message, not a stack trace
+  }
+}
+const { values, positionals } = parse()
+const command = positionals[0] ?? 'start'
+if (!['start', 'mcp'].includes(command) || positionals.length > 1) usageError(`unknown command: ${positionals.join(' ')}`)
 
 const dataDir = join(resolve(values.dir!), '.shared-pro')
 const store = openStore(join(dataDir, 'comments.db'))
