@@ -177,6 +177,42 @@ Vòng làm việc thường gặp: `list_comments` → `get_comment` → tìm ph
 
 Proxy và MCP là hai process riêng nhưng dùng chung file SQLite (chế độ WAL), nên agent đọc được góp ý kể cả khi proxy đã tắt.
 
+### Tự động báo AI khi có góp ý mới
+
+MCP thông thường không tự đánh thức được AI: agent chỉ thấy góp ý khi nó gọi `list_comments`. Có hai cách để AI tự xử lý góp ý mới:
+
+**Cách 1: Channels, gần như tức thì (Claude Code, bản thử nghiệm).** MCP server của shared-pro khai báo `claude/channel`. Khi có góp ý hoặc trả lời mới từ người review, nó đẩy một sự kiện vào phiên Claude Code đang mở, và Claude bắt tay xử lý ngay. Chạy trong thư mục project của app:
+
+```bash
+claude mcp add shared-pro -- shared-pro mcp --dir "$PWD"
+```
+
+```bash
+claude --dangerously-load-development-channels server:shared-pro
+```
+
+Màn hình cảnh báo hiện ra thì chọn *I am using this for local development*. Từ đó mỗi góp ý mới hiện trong phiên dưới dạng `← shared-pro: New review comment on /trang…`, rồi Claude gọi `get_comment`, sửa code và `resolve_comment`.
+
+- Sự kiện **chỉ chứa id thread, loại (comment/reply) và trang**, không chứa nội dung góp ý. Nội dung chỉ đọc được qua `get_comment`, nơi nó đã được bọc `<untrusted_comment>`, nên chặn được prompt injection qua channel. URL được mã hóa để không thoát được khỏi thuộc tính của thẻ.
+- Reply của AI không phát sự kiện, nên agent không tự đánh thức chính nó. Góp ý có từ trước khi phiên bắt đầu cũng không được báo lại.
+- Giới hạn của bản thử nghiệm:
+  - Phải dùng `--dangerously-load-development-channels`, vì kênh tự viết chưa nằm trong danh sách Anthropic duyệt.
+  - Chỉ chạy ở phiên tương tác, không chạy với `-p`.
+  - Cần đăng nhập claude.ai hoặc API key của Console. Gói Team/Enterprise thì admin phải bật `channelsEnabled`.
+  - Mỗi khi AI sửa file, nó vẫn hỏi bạn duyệt như bình thường.
+  - Xem [tài liệu Channels](https://code.claude.com/docs/en/channels).
+- Đã kiểm tra bằng client MCP chính thức, qua cả kết nối nội bộ và stdio với process `shared-pro mcp` thật. Chưa chạy trong một phiên Claude Code thật.
+
+**Cách 2: `/loop`, không cần cài gì thêm.** Trong phiên Claude Code ở thư mục project của app:
+
+```
+/loop 3m Kiểm tra shared-pro: nếu có góp ý đang mở thì list_comments → get_comment → sửa code → resolve_comment kèm ghi chú. Không có thì thôi.
+```
+
+Góp ý mới phải chờ tối đa bằng khoảng lặp, và mỗi lần lặp đều tốn một lượt chạy model.
+
+> Mình không khuyên tự chạy `claude -p` mỗi khi có góp ý: người ngoài có share link sẽ khiến AI sửa code mà không ai duyệt.
+
 ### Cập nhật realtime hoạt động thế nào
 
 - Widget dùng **long-polling**: gửi `GET /__sp/api/changes?since=<version>` và proxy giữ request đó cho đến khi có thay đổi (tối đa 25 giây), rồi widget tải lại ngay.
@@ -257,4 +293,4 @@ Dependency khi chạy chỉ có `@modelcontextprotocol/sdk`, `zod` và `modern-s
 - Publish lên npm (gói đã sẵn sàng, chỉ cần bỏ `"private": true` rồi `npm publish`).
 - Khoanh vùng bằng thao tác chạm trên điện thoại.
 - Ảnh chụp chính xác header `position: fixed` khi trang đã cuộn.
-- Báo cho dev khi có góp ý mới (chuông terminal hoặc thông báo MCP).
+- Kiểm tra channel trong một phiên Claude Code thật. Báo sự kiện khi người review mở lại một thread.

@@ -228,4 +228,8 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
 - **Named tunnel** (`52d51e5`): `--tunnel-name` + `--hostname`, lệnh `cloudflared tunnel --url … run NAME` (thứ tự tham số kiểm theo `--help` thật). Chưa chạy trọn vẹn trên tài khoản Cloudflare thật.
 - **Build** (`5408969`): `scripts/build.ts` strip type ra `dist/`, `bin` trỏ `dist/cli.js`, `prepare` tự build. `npm pack` cài vào project khác chạy được, không có ExperimentalWarning.
 - **Xóa góp ý**: chỉ xóa được góp ý/trả lời của chính mình. Mỗi trình duyệt có khóa ngẫu nhiên, server lưu hash SHA-256 (cột `owner`, có migration), API trả `mine` thay vì hash. `DELETE /__sp/api/comments/:id` → 204 / 403 / 404; xóa thread thì xóa luôn reply và file ảnh. Upload ảnh cũng phải đúng tác giả thread. Đã thử thật trong browser: hủy xác nhận thì giữ, xóa reply, xóa thread (file ảnh bị xóa theo), góp ý của người khác không có nút Xóa. Test 90/90.
+- **Channel cho Claude Code**: MCP server khai báo `capabilities.experimental['claude/channel']`. Nó theo dõi DB bằng `store.watch` (data_version) và đẩy `notifications/claude/channel` cho mỗi góp ý/trả lời mới của người review.
+  - Sự kiện chỉ gồm `kind`, `thread_id`, `url` (đã mã hóa); không có nội dung hay tên người viết, vì đó là dữ liệu không tin cậy. Bỏ qua reply của agent.
+  - Mốc thời gian lấy lúc khởi động, cộng một tập id đã báo, thay vì dùng rowid (SQLite có thể dùng lại rowid sau khi xóa).
+  - Test: capability, sự kiện khi process khác ghi, không lộ nội dung, URL độc hại, end-to-end qua stdio với `cli.ts mcp` thật. Chưa thử trong một phiên Claude Code thật (bản thử nghiệm cần `--dangerously-load-development-channels`, chạy tương tác).
 

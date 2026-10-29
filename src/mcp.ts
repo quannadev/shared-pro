@@ -58,16 +58,46 @@ function detail(t: Thread) {
     .join('\n')
 }
 
+// Inside a <channel ... url="…"> attribute: percent-encode anything that could close the quote or the tag.
+const safeUrl = (u: string) => u.slice(0, 300).replace(/[^\w\-./~%?=&:+,;@!$*()]/g, (c) => encodeURIComponent(c))
+
 export function createMcpServer(store: Store) {
   const server = new McpServer(
     { name: 'shared-pro', version: '0.1.0' },
     {
+      // Claude Code "channels" (research preview): lets this server push events into a running session when it is
+      // started with --dangerously-load-development-channels server:<name>. Other clients ignore it.
+      capabilities: { experimental: { 'claude/channel': {} } },
       instructions:
         'Review comments left by people on the running app (via the shared-pro proxy). ' +
         'Typical loop: list_comments → get_comment → edit code → resolve_comment. ' +
+        'When loaded as a channel, new comments arrive as <channel source="shared-pro" kind="comment|reply" thread_id="…" url="…">: ' +
+        'call get_comment with that thread_id, fix it, then resolve_comment (or reply_comment to ask). ' +
         WARNING,
     },
   )
+
+  // Push one event per new comment/reply from a person. Ids and page only: the reviewer's words stay behind
+  // get_comment's untrusted wrapper. Agent replies are skipped so the agent never wakes itself up.
+  const since = new Date().toISOString()
+  const notified = new Set(store.humanSince(since).map((c) => c.id)) // same-millisecond rows that already existed
+  const unwatch = store.watch(() => {
+    for (const c of store.humanSince(since)) {
+      if (notified.has(c.id)) continue
+      notified.add(c.id)
+      const threadId = c.parent_id ?? c.id
+      server.server
+        .notification({
+          method: 'notifications/claude/channel',
+          params: {
+            content: `New review ${c.parent_id ? 'reply' : 'comment'} on ${safeUrl(c.url)}. Call get_comment with id ${threadId} to read it.`,
+            meta: { kind: c.parent_id ? 'reply' : 'comment', thread_id: threadId, url: safeUrl(c.url) },
+          },
+        })
+        .catch(() => {}) // not connected (yet/anymore): nothing to wake
+    }
+  })
+  server.server.onclose = unwatch
 
   server.registerTool(
     'list_comments',

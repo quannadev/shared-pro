@@ -150,6 +150,11 @@ export function openStore(file: string) {
       }
     },
 
+    /** Comments and replies written by people (not the agent) at or after `since` (ISO time), oldest first. */
+    humanSince(since: string): Comment[] {
+      return db.prepare('SELECT * FROM comments WHERE by_agent = 0 AND created_at >= ? ORDER BY created_at, rowid').all(since) as Comment[]
+    },
+
     /** Owner hash of a comment or reply; undefined if it does not exist, null if it has no owner. */
     owner(id: string): string | null | undefined {
       return row(id)?.owner
