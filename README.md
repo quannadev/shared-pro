@@ -39,6 +39,16 @@ AI Agent ◄─stdio─ shared-pro mcp
 
 ## Cài đặt
 
+**Không cần cài: chạy thẳng bằng một lệnh `npx`** trong thư mục project của app:
+
+```bash
+npx -y github:quannadev/shared-pro --target 3000 --path /qtw-project-manager
+```
+
+npx tải mã từ GitHub, tự build (script `prepare`) rồi chạy. Lần đầu mất khoảng 13 giây, các lần sau dùng cache của npm. Đã kiểm tra cả chế độ proxy lẫn MCP.
+
+Muốn có lệnh `shared-pro` ngắn gọn, hoặc muốn sửa mã nguồn:
+
 ```bash
 git clone https://github.com/quannadev/shared-pro.git
 cd shared-pro
@@ -46,9 +56,8 @@ npm install     # tự build ra dist/ (script prepare)
 npm link        # tạo lệnh `shared-pro` toàn cục
 ```
 
-- **Chưa publish lên npm** (tên `shared-pro` vẫn còn trống). Gói đã sẵn sàng: `npm pack` ra 9 file (28,8kB), cài vào project khác và chạy được từ `node_modules`.
+- **Chưa publish lên npm** (tên `shared-pro` vẫn còn trống). Sau khi publish thì lệnh rút gọn còn `npx shared-pro …`. Gói đã sẵn sàng: `npm pack` ra 9 file, cài vào project khác chạy được từ `node_modules`.
 - Không muốn link thì chạy thẳng `node /đường/dẫn/shared-pro/dist/cli.js …`.
-- `npx github:quannadev/shared-pro` cần npm chạy script `prepare` của gói cài từ git. npm bản mới có thể chặn script này nếu chưa được duyệt, nên chưa đảm bảo chạy được.
 
 ## Bắt đầu nhanh
 
@@ -146,6 +155,12 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 Chạy trong thư mục project của app:
 
 ```bash
+claude mcp add shared-pro -- npx -y github:quannadev/shared-pro mcp --dir "$PWD"
+```
+
+Đã `npm link` thì dùng lệnh ngắn hơn:
+
+```bash
 claude mcp add shared-pro -- shared-pro mcp --dir "$PWD"
 ```
 
@@ -161,8 +176,8 @@ claude mcp add shared-pro -- node /đường/dẫn/shared-pro/dist/cli.js mcp --
 {
   "mcpServers": {
     "shared-pro": {
-      "command": "node",
-      "args": ["/đường/dẫn/shared-pro/dist/cli.js", "mcp", "--dir", "/đường/dẫn/project-của-app"]
+      "command": "npx",
+      "args": ["-y", "github:quannadev/shared-pro", "mcp", "--dir", "/đường/dẫn/project-của-app"]
     }
   }
 }
