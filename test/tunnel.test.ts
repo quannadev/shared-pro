@@ -167,3 +167,21 @@ test('CLI: --tunnel-name needs --hostname; with both the share link uses the fix
   ok.cli.kill('SIGTERM')
   await once(ok.cli, 'exit')
 })
+
+test('CLI warns when --dir is not a project folder (e.g. started from $HOME)', async () => {
+  const start = async (dir: string) => {
+    const cli = spawn(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), '--target', '1', '--port', '0', '--no-tunnel', '--dir', dir])
+    let out = ''
+    cli.stdout.on('data', (d) => (out += d))
+    cli.stderr.on('data', (d) => (out += d))
+    for (let i = 0; i < 100 && !/local link:/.test(out); i++) await new Promise((r) => setTimeout(r, 30))
+    cli.kill()
+    await once(cli, 'exit')
+    return out
+  }
+  const bare = mkdtempSync(join(tmpdir(), 'sp-home-'))
+  assert.match(await start(bare), /not a project folder[\s\S]*shared-pro mcp --dir/)
+  const project = mkdtempSync(join(tmpdir(), 'sp-proj-'))
+  writeFileSync(join(project, 'package.json'), '{}')
+  assert.doesNotMatch(await start(project), /not a project folder/)
+})

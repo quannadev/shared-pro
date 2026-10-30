@@ -85,6 +85,8 @@ export function openStore(file: string) {
   const dataVersion = () => (db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version
 
   return {
+    file, // shown when nothing is found: proxy and MCP must point at the same DB
+
     create(c: NewComment): Comment {
       let url = c.url
       if (c.parent_id) {

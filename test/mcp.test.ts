@@ -226,3 +226,12 @@ test('channel over stdio: the real `cli.ts mcp` process pushes when the proxy wr
     await stdio.close()
   }
 })
+
+test('an empty result names the DB file, so a proxy/MCP --dir mismatch is obvious', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'sp-')), '.shared-pro', 'comments.db')
+  const { c } = await channelClient(openStore(file))
+  const res = (await c.callTool({ name: 'list_comments', arguments: {} })) as { content: { text: string }[] }
+  assert.match(res.content[0].text, /No open comments/)
+  assert.ok(res.content[0].text.includes(file), res.content[0].text)
+  await c.close()
+})

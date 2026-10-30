@@ -112,7 +112,12 @@ export function createMcpServer(store: Store) {
     },
     async ({ status, url }) => {
       const threads = store.list({ status, url })
-      if (!threads.length) return text(`No ${status} comments${url ? ` on ${url}` : ''}.`)
+      if (!threads.length) {
+        return text(
+          `No ${status} comments${url ? ` on ${url}` : ''} in ${store.file}. ` +
+            'If reviewers did comment, the proxy is writing to another DB: start `shared-pro` and `shared-pro mcp` with the same --dir.',
+        )
+      }
       return text(`${plural(threads.length, `${status} thread`)}. ${WARNING}\n\n${threads.map(summary).join('\n\n')}`)
     },
   )

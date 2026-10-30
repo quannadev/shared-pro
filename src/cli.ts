@@ -79,6 +79,16 @@ function start() {
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
 
+  // Started from $HOME (or any non-project folder), comments land somewhere the MCP server of the project never looks.
+  const projectDir = resolve(values.dir!)
+  if (!['package.json', '.git'].some((f) => existsSync(join(projectDir, f)))) {
+    console.error(
+      `shared-pro: warning: ${projectDir} is not a project folder (no package.json or .git).\n` +
+        `  Comments are stored in ${dataDir}. Run shared-pro from your app's folder, or point the AI agent here:\n` +
+        `  shared-pro mcp --dir ${projectDir}`,
+    )
+  }
+
   const server = createProxy({ target, store, token })
   server.on('error', (e: NodeJS.ErrnoException) => {
     console.error(e.code === 'EADDRINUSE' ? `shared-pro: port ${values.port} is already in use, pick another with --port` : `shared-pro: ${e.message}`)
