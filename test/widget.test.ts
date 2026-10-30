@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, badgeTitle, belowViewport, isCommentShortcut, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
+import { areaRect, badgeTitle, belowViewport, isCommentShortcut, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -213,4 +213,36 @@ test('C starts commenting from anywhere, but never while typing, with modifiers,
   assert.equal(isCommentShortcut(key({ repeat: true })), false, 'holding the key')
   assert.equal(isCommentShortcut(key({ isComposing: true })), false, 'IME (e.g. Vietnamese Telex) composing')
   assert.equal(isCommentShortcut(key({ key: 'x', code: 'KeyX' })), false)
+})
+
+// Native <dialog>.showModal() (used by the qtw app) puts the dialog in the top layer and makes everything outside
+// it inert: the widget must live inside the open modal to stay visible and clickable.
+test('widgetParent: the open modal dialog if there is one, else <body>', () => {
+  const doc = page(`<dialog id="d"><p>x</p></dialog>`)
+  assert.equal(widgetParent(doc), doc.body)
+  const modal = doc.querySelector('dialog')!
+  assert.equal(widgetParent({ body: doc.body, querySelector: (s: string) => (s === 'dialog:modal' ? modal : null) } as unknown as Document), modal)
+  // engines without :modal throw on the selector: fall back to <body>, never crash
+  assert.equal(widgetParent({ body: doc.body, querySelector: () => { throw new SyntaxError('bad selector') } } as unknown as Document), doc.body)
+})
+
+test('pinVisibleUnderModal: with a modal open only anchors inside it get pins', () => {
+  const doc = page(`<main><p id="bg">behind</p></main><dialog id="d"><p id="in">inside</p></dialog>`)
+  const d = doc.querySelector('dialog')!
+  assert.equal(pinVisibleUnderModal(doc.querySelector('#bg')!, null), true, 'no modal: everything')
+  assert.equal(pinVisibleUnderModal(doc.querySelector('#bg')!, d), false, 'behind the backdrop')
+  assert.equal(pinVisibleUnderModal(doc.querySelector('#in')!, d), true)
+})
+
+test('⌥/Alt+C toggles the floating button; plain C still means "comment"', () => {
+  const doc = page(`<input id="i"><p id="p">x</p>`)
+  const key = (init: Record<string, unknown>, target = doc.querySelector('#p')!) =>
+    ({ key: 'ç', code: 'KeyC', ctrlKey: false, metaKey: false, altKey: true, repeat: false, isComposing: false, target, ...init })
+  assert.equal(isToggleFabShortcut(key({})), true, 'mac Option+C types ç: matched by code')
+  assert.equal(isToggleFabShortcut(key({ key: 'c' })), true, 'Windows/Linux Alt+C')
+  assert.equal(isToggleFabShortcut(key({ altKey: false, key: 'c' })), false)
+  assert.equal(isCommentShortcut(key({})), false, 'Alt+C is not the comment shortcut')
+  assert.equal(isToggleFabShortcut(key({}, doc.querySelector('#i')!)), false, 'not while typing')
+  assert.equal(isToggleFabShortcut(key({ metaKey: true })), false)
+  assert.equal(isToggleFabShortcut(key({ repeat: true })), false)
 })

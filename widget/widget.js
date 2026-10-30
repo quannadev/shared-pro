@@ -8,6 +8,9 @@ const SAFETY_POLL_MS = 30000 // while it is up, in case a change is ever missed
 const T = {
   title: 'Góp ý',
   fabTitle: 'Góp ý · nhấn C ở bất kỳ đâu để góp ý nhanh',
+  hideFab: 'Ẩn nút',
+  showFab: 'Hiện nút góp ý (⌥/Alt+C)',
+  fabHiddenInfo: 'Đã ẩn nút góp ý. Bấm chấm nhỏ ở góc phải dưới hoặc ⌥/Alt+C để hiện lại. Phím C vẫn dùng để góp ý.',
   add: '+ Thêm góp ý (C)',
   cancelPick: 'Hủy chọn (Esc)',
   hint: 'Click vào phần tử, hoặc kéo chuột để khoanh vùng · Esc để thoát',
@@ -179,12 +182,32 @@ export function pageKey(loc) {
  * inputs). Never while typing, never with ⌘/Ctrl/Alt (⌘C/Ctrl+C is copy), not on key repeat, not mid IME composition
  * (Vietnamese Telex). `code` covers non-Latin layouts where the C key types another letter.
  */
+const isTypingTarget = (t) =>
+  t?.nodeType === 1 && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!t.closest?.('[contenteditable=""], [contenteditable="true"]'))
+
 export function isCommentShortcut(e) {
-  const t = e.target
-  const typing =
-    t?.nodeType === 1 && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!t.closest?.('[contenteditable=""], [contenteditable="true"]'))
-  return (e.key === 'c' || e.key === 'C' || e.code === 'KeyC') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && !e.isComposing && !typing
+  return (e.key === 'c' || e.key === 'C' || e.code === 'KeyC') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && !e.isComposing && !isTypingTarget(e.target)
 }
+
+/** ⌥/Alt+C hides or shows the floating button. Matched by `code`: on a Mac, Option+C types "ç". */
+export const isToggleFabShortcut = (e) =>
+  e.code === 'KeyC' && e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && !e.isComposing && !isTypingTarget(e.target)
+
+/**
+ * Native <dialog>.showModal() puts the dialog in the top layer (above any z-index) and makes everything outside it
+ * inert, popovers included (checked in Chrome). So while a modal is open the widget lives inside it. Engines without
+ * :modal throw on the selector: stay in <body>.
+ */
+export function widgetParent(doc) {
+  try {
+    return doc.querySelector('dialog:modal') ?? doc.body
+  } catch {
+    return doc.body
+  }
+}
+
+/** With a modal open, elements behind its backdrop get no pins (they would float over the dialog). */
+export const pinVisibleUnderModal = (anchor, modal) => !modal || modal.contains(anchor)
 
 // ---- "your comment was handled" ----
 /** My threads that went open → resolved since the previous load (`prev`: id → status at that load). */
@@ -236,6 +259,12 @@ textarea:focus, input:focus { outline: 2px solid #2563eb; outline-offset: -1px; 
 .fab { position: fixed; right: 16px; bottom: 16px; height: 40px; min-width: 40px; border-radius: 20px; border: none;
   background: #111827; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 16px; pointer-events: auto; }
 .fab, .fab * { color: #fff; } .fab:hover { background: #1f2937; } .fab.picking { background: #2563eb; }
+.fab.mini { min-width: 0; width: 14px; height: 14px; padding: 0; right: 6px; bottom: 6px; opacity: .45; box-shadow: none; }
+.fab.mini:hover { opacity: 1; }
+.fab-hide { position: fixed; right: 50px; bottom: 44px; width: 20px; height: 20px; padding: 0; border-radius: 10px; line-height: 1;
+  background: #fff; border: 1px solid #d0d7de; font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.fab-hide.show { opacity: 1; pointer-events: auto; }
+header .link { margin-left: auto; margin-right: 6px; color: #57606a; font-size: 12px; }
 .fab.fresh::after { content: ''; position: absolute; top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 5px; background: #22c55e; border: 2px solid #111827; }
 .toast { position: fixed; right: 16px; bottom: 68px; max-width: 340px; display: flex; gap: 6px; align-items: flex-start; background: #fff;
   border: 1px solid #d0d7de; border-left: 4px solid #1a7f37; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 10px; pointer-events: auto; }
@@ -317,6 +346,7 @@ function mount() {
     error: null,
     name: store.get('sp_author'),
     nameDraft: '',
+    fabHidden: store.get('sp_fab_hidden') === '1', // shrunk to a faint dot; tap it or ⌥/Alt+C to bring it back
   }
   const drafts = new Map() // thread id → unsent reply text, survives re-renders
   let lastJson = ''
@@ -339,12 +369,45 @@ function mount() {
   const fab = h('button', {
     class: 'fab',
     title: T.fabTitle,
-    onclick: () => (state.picking ? setPicking(false) : ((state.open = true), render())),
+    onclick: () =>
+      state.picking ? setPicking(false) : state.fabHidden && !state.open ? setFabHidden(false) : ((state.open = true), render()),
   })
+  // Small "–" on hover to shrink the button out of the way (mobile: "Ẩn nút" in the panel header).
+  const fabHide = h('button', { class: 'fab-hide', title: T.hideFab, 'aria-label': T.hideFab, onclick: () => setFabHidden(true) }, '–')
+  let fabHideTimer = 0
+  const showFabHide = (on) => {
+    clearTimeout(fabHideTimer)
+    if (on) fabHide.classList.add('show')
+    else fabHideTimer = setTimeout(() => fabHide.classList.remove('show'), 300)
+  }
+  for (const el of [fab, fabHide]) {
+    el.addEventListener('mouseenter', () => showFabHide(!state.fabHidden && !state.picking))
+    el.addEventListener('mouseleave', () => showFabHide(false))
+  }
   const toast = h('div', { class: 'toast', hidden: true, role: 'status' })
-  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, toast, fab)
-  const attach = () => host.isConnected || document.body.append(host) // React error recovery can replace <body>
+  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, toast, fab, fabHide)
+
+  // Live in <body>, or inside the open modal <dialog> (top layer, rest of the page inert). React error recovery can
+  // also replace <body>; the 1s tick re-checks.
+  const attach = () => {
+    const parent = widgetParent(document)
+    if (host.parentNode !== parent) parent.append(host)
+  }
   attach()
+  new MutationObserver(attach).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] })
+  // Popup libraries that hide "everything else" (aria-hidden / inert on body's children) must not disable us.
+  new MutationObserver(() => {
+    host.removeAttribute('inert')
+    host.removeAttribute('aria-hidden')
+  }).observe(host, { attributes: true, attributeFilter: ['inert', 'aria-hidden'] })
+
+  function setFabHidden(hidden) {
+    state.fabHidden = hidden
+    store.set('sp_fab_hidden', hidden ? '1' : '')
+    fabHide.classList.remove('show')
+    render()
+    if (hidden) info(T.fabHiddenInfo)
+  }
 
   const pickStyle = document.createElement('style')
   pickStyle.textContent = '* { cursor: crosshair !important; }'
@@ -414,6 +477,12 @@ function mount() {
 
   let toastTimer = 0
   const hideToast = () => ((toast.hidden = true), clearTimeout(toastTimer))
+  function info(text) {
+    toast.replaceChildren(h('div', { class: 'toast-body' }, text), h('button', { class: 'icon', title: T.close, onclick: hideToast }, '×'))
+    toast.hidden = false
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(hideToast, 8000)
+  }
   function notifyResolved(list) {
     const one = list.length === 1 ? list[0] : null
     const note = one && [...one.replies].reverse().find((r) => r.by_agent)?.body
@@ -574,6 +643,14 @@ function mount() {
     (e) => {
       if (e.key === 'Escape' && (composer || state.picking)) return composer ? closeComposer() : setPicking(false)
       if (composer) return // half-written comment: C must not throw it away
+      {
+        const { code, ctrlKey, metaKey, altKey, repeat, isComposing } = e
+        if (isToggleFabShortcut({ code, ctrlKey, metaKey, altKey, repeat, isComposing, target: e.composedPath()[0] })) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          return setFabHidden(!state.fabHidden)
+        }
+      }
       const { key, code, ctrlKey, metaKey, altKey, repeat, isComposing } = e
       if (!isCommentShortcut({ key, code, ctrlKey, metaKey, altKey, repeat, isComposing, target: e.composedPath()[0] })) return
       e.preventDefault()
@@ -638,9 +715,12 @@ function mount() {
   addEventListener('resize', schedule)
 
   function position() {
+    const parent = widgetParent(document)
+    const modal = parent === document.body ? null : parent
     for (const { pin, t } of pins) {
-      const r = anchorOf(t)?.getBoundingClientRect()
-      pin.hidden = !r || r.width + r.height === 0
+      const anchor = anchorOf(t)
+      const r = anchor?.getBoundingClientRect()
+      pin.hidden = !r || r.width + r.height === 0 || !pinVisibleUnderModal(anchor, modal)
       if (!pin.hidden) {
         pin.style.transform = `translate(${r.left + (r.width * (t.pos_x ?? 0)) / 100}px, ${r.top + (r.height * (t.pos_y ?? 0)) / 100}px)`
       }
@@ -715,7 +795,12 @@ function mount() {
     fab.title = state.picking ? T.cancelPick : T.fabTitle
     fab.classList.toggle('picking', state.picking)
     fab.classList.toggle('fresh', unseen.length > 0 && !state.picking)
-    fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))))
+    const mini = state.fabHidden && !state.picking
+    fab.classList.toggle('mini', mini)
+    fab.title = mini ? T.showFab : fab.title
+    fab.replaceChildren(
+      ...(state.picking ? ['✕'] : mini ? [] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))),
+    )
 
     pins = openHere.map((t, i) => ({
       t,
@@ -763,6 +848,7 @@ function mount() {
         'header',
         {},
         h('strong', {}, T.title),
+        !state.fabHidden && h('button', { class: 'link', onclick: () => ((state.open = false), setFabHidden(true)) }, T.hideFab),
         h('button', { class: 'icon', title: T.close, onclick: () => ((state.open = false), setPicking(false)) }, '×'),
       ),
       h(

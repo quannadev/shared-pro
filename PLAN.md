@@ -241,4 +241,11 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Không kích hoạt khi: đang gõ (input/textarea/select/contenteditable, kể cả trong shadow DOM), giữ ⌘/Ctrl/Alt, giữ phím lặp, đang gõ IME (Telex), hoặc ô góp ý đang mở (để không mất bản nháp). Dùng thêm `code === 'KeyC'` cho bàn phím không phải Latin. Khi nhận C, widget chặn sự kiện để app không nhận phím đó.
   - Bắt đầu bằng C khi bảng đang đóng thì gửi xong bảng vẫn đóng.
   - Đã thử bằng phím thật: C bật/tắt chế độ chọn, gõ "c" trong ô góp ý và trong ô nhập của app vẫn ra chữ, ⌘C không kích hoạt và app vẫn nhận được, gửi xong bảng vẫn đóng và có pin. Test 101/101.
+- **Nút nổi luôn ở trên cùng, kể cả khi có popup; có thể ẩn/hiện.**
+  - App qtw dùng `<dialog>.showModal()`. Popup đó nằm trong top layer (trên mọi z-index) và làm mọi thứ bên ngoài bị inert.
+  - Đã thử trong Chrome: Popover API (`popover` + `showPopover`, nâng lên sau khi dialog mở) vẫn bị inert, nên loại. Chuyển widget vào trong `dialog:modal` đang mở thì bấm và focus được. Theo dõi thuộc tính `open` bằng MutationObserver để chuyển vào và trả về `body`.
+  - Khi có modal, chỉ hiện pin của phần tử trong modal. Gỡ `inert`/`aria-hidden` nếu thư viện popup gắn vào widget.
+  - Giới hạn: dialog có `transform` thì `position: fixed` tính theo dialog. Đã kiểm tra: dialog của qtw không có transform, chỉ có `overflow-hidden` (không cắt được phần tử fixed).
+  - Ẩn nút: rê chuột rồi bấm "–", link "Ẩn nút" trong bảng, hoặc ⌥/Alt+C (khớp theo `code`, vì Option+C trên Mac gõ ra "ç"). Khi ẩn, nút thu thành chấm mờ, bấm để hiện lại; dùng cách này để trên điện thoại không bị mất nút hẳn. Lưu trong `localStorage`. Khi ẩn, phím C vẫn dùng được và nút tạm hiện ✕ để hủy.
+  - Đã thử thật: widget vào popup, bấm/focus được, pin nền ẩn, góp ý phần tử trong popup lưu đúng và popup không bị đóng; đóng popup thì widget về `body`; ⌥+C bật/tắt bằng phím thật; ẩn bằng "–", tải lại vẫn ẩn, bấm chấm để hiện lại. Test 104/104.
 
