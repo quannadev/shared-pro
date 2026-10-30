@@ -232,4 +232,9 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Sự kiện chỉ gồm `kind`, `thread_id`, `url` (đã mã hóa); không có nội dung hay tên người viết, vì đó là dữ liệu không tin cậy. Bỏ qua reply của agent.
   - Mốc thời gian lấy lúc khởi động, cộng một tập id đã báo, thay vì dùng rowid (SQLite có thể dùng lại rowid sau khi xóa).
   - Test: capability, sự kiện khi process khác ghi, không lộ nội dung, URL độc hại, end-to-end qua stdio với `cli.ts mcp` thật. Chưa thử trong một phiên Claude Code thật (bản thử nghiệm cần `--dangerously-load-development-channels`, chạy tương tác).
+- **Báo cho người review khi AI xử lý xong góp ý của họ** (chỉ góp ý `mine`, ở mọi trang; widget giờ luôn tải thread của mọi trang rồi lọc theo trang khi hiển thị):
+  - Đang mở trang: thông báo nổi kèm ghi chú của AI, bấm vào mở đúng thread (chuyển trang nếu cần). Đo được: hiện sau 283ms tính từ lúc `resolve_comment`.
+  - Tab ở nền: tiêu đề nhấp nháy `(n) ✓ …`, trả lại tiêu đề gốc khi quay lại. Long-poll vẫn tải dữ liệu khi tab ở nền.
+  - Lúc đó không mở trang: chấm xanh trên nút 💬, nhãn "· n mới" ở tab Đã xong, badge **Mới** trên thẻ. "Đã xem" lưu trong `localStorage` với khóa `id:resolved_at`, nên mở lại rồi AI xử lý lần nữa thì lại tính là mới. Lần đầu dùng thì đánh dấu mọi thứ hiện có là đã xem, để không bị một loạt thông báo cũ.
+  - Test helper (happy-dom). Chạy thật: thông báo, bấm mở đúng thread, badge Mới, tải lại không còn báo; tab ở nền được giả lập bằng cách ghi đè `document.hidden`, vì Browser pane luôn báo tab đang hiển thị.
 

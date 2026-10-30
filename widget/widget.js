@@ -27,6 +27,10 @@ const T = {
   cancel: 'Hủy',
   reply: 'Trả lời',
   reopen: 'Mở lại',
+  resolvedOne: 'Góp ý của bạn đã được AI xử lý',
+  resolvedMany: (n) => `${n} góp ý của bạn đã được AI xử lý`,
+  fresh: 'Mới',
+  freshCount: (n) => `${n} mới`,
   delete: 'Xóa',
   confirmDelete: 'Xóa góp ý này? Các trả lời và ảnh chụp đi kèm cũng bị xóa.',
   confirmDeleteReply: 'Xóa trả lời này?',
@@ -169,6 +173,16 @@ export function pageKey(loc) {
   return u.pathname + u.search
 }
 
+// ---- "your comment was handled" ----
+/** My threads that went open → resolved since the previous load (`prev`: id → status at that load). */
+export const resolvedSince = (prev, threads) => threads.filter((t) => t.mine && t.status === 'resolved' && prev.get(t.id) === 'open')
+/** One key per resolution: reopened and resolved again counts as new again. */
+export const seenKey = (t) => `${t.id}:${t.resolved_at}`
+export const unseenResolved = (threads, seen) => threads.filter((t) => t.mine && t.status === 'resolved' && !seen.has(seenKey(t)))
+const BADGE = /^\(\d+\) ✓ /
+export const stripBadge = (title) => title.replace(BADGE, '')
+export const badgeTitle = (title, n) => `(${n}) ✓ ${stripBadge(title)}`
+
 /** Flattens and drops null/false/undefined: append()/replaceChildren() would print them as text. */
 export const nodes = (...children) => children.flat().filter((c) => c != null && c !== false)
 
@@ -209,6 +223,13 @@ textarea:focus, input:focus { outline: 2px solid #2563eb; outline-offset: -1px; 
 .fab { position: fixed; right: 16px; bottom: 16px; height: 40px; min-width: 40px; border-radius: 20px; border: none;
   background: #111827; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 16px; pointer-events: auto; }
 .fab, .fab * { color: #fff; } .fab:hover { background: #1f2937; } .fab.picking { background: #2563eb; }
+.fab.fresh::after { content: ''; position: absolute; top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 5px; background: #22c55e; border: 2px solid #111827; }
+.toast { position: fixed; right: 16px; bottom: 68px; max-width: 340px; display: flex; gap: 6px; align-items: flex-start; background: #fff;
+  border: 1px solid #d0d7de; border-left: 4px solid #1a7f37; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 10px; pointer-events: auto; }
+.toast-body { border: none; background: none; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+.toast-body:hover { background: none; } .toast .note { color: #57606a; font-size: 12px; }
+.fresh-badge { background: #1a7f37; color: #fff; border-radius: 10px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+.fresh-count { color: #1a7f37; font-weight: 600; }
 .fab .count { background: #ef4444; border-radius: 10px; padding: 0 6px; font-size: 12px; font-weight: 600; }
 .panel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100vw; background: #fff; border-left: 1px solid #d0d7de;
   box-shadow: -8px 0 24px rgba(0,0,0,.12); display: flex; flex-direction: column; pointer-events: auto; }
@@ -307,7 +328,8 @@ function mount() {
     title: T.title,
     onclick: () => (state.picking ? setPicking(false) : ((state.open = true), render())),
   })
-  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, fab)
+  const toast = h('div', { class: 'toast', hidden: true, role: 'status' })
+  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, toast, fab)
   const attach = () => host.isConnected || document.body.append(host) // React error recovery can replace <body>
   attach()
 
@@ -341,20 +363,77 @@ function mount() {
     lastLoad = Date.now()
     let threads
     try {
-      ;({ threads } = await api(state.scope === 'page' ? `?url=${encodeURIComponent(url)}` : ''))
+      // Always every page: a reviewer must hear about their comments on other pages too. Scope filters in render().
+      ;({ threads } = await api(''))
     } catch (e) {
       // Only network/API errors land here; a render bug must stay a loud uncaught error, not a banner.
       if (mine === seq && state.error !== e.message) ((state.error = e.message), render())
       return
     }
     if (mine !== seq || url !== state.url) return // a newer load or a navigation superseded this one
+    if (!seen) loadSeen(threads)
+    const justResolved = prevStatus ? resolvedSince(prevStatus, threads) : []
+    prevStatus = new Map(threads.map((t) => [t.id, t.status]))
     const json = JSON.stringify(threads)
     if (json === lastJson && !state.error) return
     lastJson = json
     state.threads = threads
     state.error = null
     render()
+    if (justResolved.length) notifyResolved(justResolved)
   }
+
+  // ---- "your comment was handled": toast, "Mới" on Đã xong, tab title while in the background ----
+  let prevStatus = null // id → status at the previous load
+  let seen = null // seenKey()s of my resolutions already looked at (localStorage, survives reloads)
+  let freshView = new Set() // keys shown with a "Mới" badge in the current Đã xong view
+  const SEEN = 'sp_seen_resolved'
+  const saveSeen = () => store.set(SEEN, JSON.stringify([...seen].slice(-500)))
+  function loadSeen(threads) {
+    try {
+      seen = new Set(JSON.parse(store.get(SEEN)))
+    } catch {
+      // First visit from this browser: whatever is already resolved is not news.
+      seen = new Set(unseenResolved(threads, new Set()).map(seenKey))
+      saveSeen()
+    }
+  }
+
+  let toastTimer = 0
+  const hideToast = () => ((toast.hidden = true), clearTimeout(toastTimer))
+  function notifyResolved(list) {
+    const one = list.length === 1 ? list[0] : null
+    const note = one && [...one.replies].reverse().find((r) => r.by_agent)?.body
+    const open = () => {
+      hideToast()
+      if (one) return focusThread(one.id)
+      Object.assign(state, { open: true, filter: 'resolved' })
+      render()
+    }
+    toast.replaceChildren(
+      h('button', { class: 'toast-body', onclick: open }, h('b', {}, `🤖 ${one ? T.resolvedOne : T.resolvedMany(list.length)}`), note && h('span', { class: 'note' }, note.slice(0, 160))),
+      h('button', { class: 'icon', title: T.close, onclick: hideToast }, '×'),
+    )
+    toast.hidden = false
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(hideToast, 15000)
+    if (document.hidden) flashTitle(list.length)
+  }
+
+  let titleTimer = 0
+  let titleCount = 0
+  function flashTitle(n) {
+    titleCount += n
+    titleTimer ||= setInterval(() => {
+      document.title = /^\(\d+\) ✓ /.test(document.title) ? stripBadge(document.title) : badgeTitle(document.title, titleCount)
+    }, 1000)
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !titleTimer) return
+    clearInterval(titleTimer)
+    titleTimer = titleCount = 0
+    document.title = stripBadge(document.title)
+  })
 
   const act = (fn) => async () => {
     try {
@@ -606,14 +685,17 @@ function mount() {
 
   // ---- render ----
   function render() {
-    const open = state.threads.filter((t) => t.status === 'open')
-    const resolved = state.threads.filter((t) => t.status === 'resolved')
-    const openHere = open.filter((t) => t.url === state.url) // pins and the fab count are about this page only
+    const scoped = state.scope === 'page' ? state.threads.filter((t) => t.url === state.url) : state.threads
+    const open = scoped.filter((t) => t.status === 'open')
+    const resolved = scoped.filter((t) => t.status === 'resolved')
+    const openHere = state.threads.filter((t) => t.status === 'open' && t.url === state.url) // pins + fab: this page
+    const unseen = seen ? unseenResolved(state.threads, seen) : [] // every page: they are the reviewer's own
 
     // While picking, the panel steps aside so every element is clickable; the fab becomes "cancel".
     fab.hidden = state.open && !state.picking
     fab.title = state.picking ? T.cancelPick : T.title
     fab.classList.toggle('picking', state.picking)
+    fab.classList.toggle('fresh', unseen.length > 0 && !state.picking)
     fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))))
 
     pins = openHere.map((t, i) => ({
@@ -629,6 +711,14 @@ function mount() {
 
     panel.hidden = !state.open || state.picking
     if (panel.hidden) return
+
+    // Looking at Đã xong is what makes a resolution "seen"; the badges stay for this view only.
+    if (state.filter === 'resolved' && unseen.length) {
+      freshView = new Set(unseen.map(seenKey))
+      for (const k of freshView) seen.add(k)
+      saveSeen()
+      fab.classList.remove('fresh') // computed above, before these became seen
+    } else if (state.filter !== 'resolved') freshView.clear()
 
     // Keep what the user is typing: focus, caret and list scroll survive the rebuild.
     const focused = root.activeElement
@@ -661,7 +751,12 @@ function mount() {
         { class: 'toolbar' },
         h('button', { class: 'primary', onclick: () => setPicking(!state.picking) }, state.picking ? T.cancelPick : T.add),
         h('div', { class: 'tabs scope' }, scopeTab('page', T.thisPage), scopeTab('all', T.allPages)),
-        h('div', { class: 'tabs' }, tab('open', `${T.open} (${open.length})`), tab('resolved', `${T.resolved} (${resolved.length})`)),
+        h(
+          'div',
+          { class: 'tabs' },
+          tab('open', `${T.open} (${open.length})`),
+          tab('resolved', nodes(`${T.resolved} (${resolved.length})`, state.filter !== 'resolved' && unseen.length > 0 && h('span', { class: 'fresh-count' }, ` · ${T.freshCount(unseen.length)}`))),
+        ),
       ),
       state.error && h('div', { class: 'error' }, state.error),
       list,
@@ -708,6 +803,7 @@ function mount() {
         'div',
         { class: 'meta' },
         h('span', { class: `num${t.status === 'open' ? '' : ' done'}` }, t.status === 'open' ? index + 1 : '✓'),
+        freshView.has(seenKey(t)) && h('span', { class: 'fresh-badge' }, T.fresh),
         h('b', {}, t.author),
         h('time', { datetime: t.created_at, title: new Date(t.created_at).toLocaleString() }, ago(t.created_at)),
       ),
@@ -774,7 +870,7 @@ function mount() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const next = (await res.json()).version
         liveUntil = Date.now() + 60_000 // a held request lasts ≤ 25s
-        if (version !== -1 && next !== version && !document.hidden) load()
+        if (version !== -1 && next !== version) load() // also in the background: that is when the tab title signals
         version = next
       } catch {
         liveUntil = 0

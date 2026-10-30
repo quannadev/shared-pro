@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, belowViewport, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
+import { areaRect, badgeTitle, belowViewport, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -174,4 +174,28 @@ test('screenshot clones only what can be in the picture: elements entirely below
   assert.equal(keepInCapture(doc.querySelector('#list')!, 800), true)
   assert.equal(keepInCapture(doc.querySelector('#list li')!, 800), false)
   assert.equal(keepInCapture(doc.querySelector('#seen')!, 800), true)
+})
+
+// Telling reviewers when the AI resolved *their* comment.
+const th = (id: string, status: string, mine = true, resolved_at: string | null = status === 'resolved' ? '2026-10-30T01:00:00Z' : null) =>
+  ({ id, status, mine, resolved_at, url: '/', replies: [] })
+
+test('resolvedSince: only my threads that went open → resolved between two loads', () => {
+  const prev = new Map([['a', 'open'], ['b', 'open'], ['c', 'resolved'], ['d', 'open']])
+  const next = [th('a', 'resolved'), th('b', 'open'), th('c', 'resolved'), th('d', 'resolved', false), th('e', 'resolved')]
+  assert.deepEqual(resolvedSince(prev, next).map((t) => t.id), ['a'], 'not b (still open), c (already), d (not mine), e (never seen open)')
+})
+
+test('unseen resolutions are keyed by id + resolved_at, so a re-resolve after reopening is new again', () => {
+  const seen = new Set([seenKey(th('a', 'resolved'))])
+  assert.deepEqual(unseenResolved([th('a', 'resolved'), th('b', 'resolved'), th('c', 'open'), th('d', 'resolved', false)], seen).map((t) => t.id), ['b'])
+  const again = th('a', 'resolved', true, '2026-10-30T05:00:00Z')
+  assert.deepEqual(unseenResolved([again], seen).map((t) => t.id), ['a'])
+})
+
+test('tab title badge is added and removed without eating the app title', () => {
+  assert.equal(badgeTitle('Quản lý dự án', 2), '(2) ✓ Quản lý dự án')
+  assert.equal(badgeTitle('(2) ✓ Quản lý dự án', 3), '(3) ✓ Quản lý dự án', 'never stacks')
+  assert.equal(stripBadge('(3) ✓ Quản lý dự án'), 'Quản lý dự án')
+  assert.equal(stripBadge('(3) Inbox'), '(3) Inbox', "the app's own counters are left alone")
 })

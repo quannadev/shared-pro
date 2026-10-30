@@ -130,6 +130,10 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 5. Mỗi góp ý có một pin số trên trang. Click pin hoặc thẻ trong bảng để cuộn tới đúng phần tử (góp ý dạng vùng thì vùng được viền lại). Thẻ có ảnh thu nhỏ, bấm để xem ảnh lớn.
    - Chuyển sang **Tất cả trang** để xem góp ý của mọi trang. Bấm một thẻ của trang khác để chuyển tới trang đó, bảng góp ý tự mở đúng thẻ.
 6. Mỗi thread có ô **Trả lời**. Tab **Đang mở / Đã xong** để lọc.
+   - **Khi AI xử lý xong góp ý của bạn** (ở bất kỳ trang nào):
+     - Đang mở trang: hiện thông báo *"🤖 Góp ý của bạn đã được AI xử lý"* kèm ghi chú của AI; bấm vào là mở đúng thread để kiểm tra (chưa đạt thì bấm **Mở lại**).
+     - Tab đang ở nền: tiêu đề tab nhấp nháy `(1) ✓ …` cho tới khi bạn quay lại.
+     - Lúc đó không mở trang: lần sau vào, nút 💬 có chấm xanh và tab ghi *Đã xong (3) · 2 mới*. Các thread chưa xem có nhãn **Mới**, mở tab Đã xong là coi như đã xem (lưu trong `localStorage` của trình duyệt).
    - Góp ý và trả lời **do chính bạn viết trên trình duyệt này** có nút **Xóa** (hỏi xác nhận trước). Xóa một góp ý thì xóa luôn các trả lời và ảnh chụp đi kèm.
 7. **Chỉ AI Agent được đánh dấu xong** (sau khi đã sửa code), và API cũng chặn người dùng làm việc này. Nếu thấy chưa đạt, bấm **Mở lại** trên thread trong tab *Đã xong*.
 
