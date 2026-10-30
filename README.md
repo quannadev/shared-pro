@@ -121,7 +121,7 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 
 1. Mở share link **ngay trong trình duyệt sẽ dùng để góp ý** (Safari, Chrome…). Trình duyệt nhận cookie từ token trong link. `?sp=…` vẫn nằm trên thanh địa chỉ, nên copy URL hoặc bấm "Mở trong Safari" từ Zalo/Messenger vẫn mang theo mã.
 2. Bấm nút **💬** ở góc phải dưới để mở bảng góp ý.
-3. Bấm **+ Thêm góp ý** (hoặc phím **C** khi bảng đang mở). Có hai cách chọn:
+3. Nhấn phím **C** ở bất kỳ đâu trên trang (không cần mở bảng góp ý), hoặc bấm **+ Thêm góp ý**. Bắt đầu bằng **C** khi bảng đang đóng thì gửi xong bảng vẫn đóng, pin mới hiện trên trang là xác nhận. Nhấn **C** lần nữa hoặc **Esc** để thôi. Có hai cách chọn:
    - **Click** vào một phần tử. Phần tử dưới chuột được viền xanh.
    - **Kéo chuột** để khoanh một vùng, dùng khi góp ý về khoảng cách hay một cụm phần tử. Chỉ hỗ trợ chuột; trên điện thoại thì chạm để chọn phần tử.
 
@@ -269,7 +269,7 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 | `quick tunnel provisioning failed with status 429` | Cloudflare giới hạn số Quick Tunnel tạo liên tiếp. Đợi vài phút, hoặc dùng named tunnel |
 | Ảnh chụp thiếu hình, hoặc header cố định bị lệch | Ảnh được dựng lại từ DOM chứ không phải chụp pixel: ảnh từ tên miền khác không cho CORS sẽ trống, header `position: fixed` có thể lệch khi trang đã cuộn |
 | Tính năng mới không chạy sau khi cập nhật | Khởi động lại `shared-pro` (và MCP). Widget tự lấy bản mới nhưng server đang chạy vẫn là code cũ |
-| Phím **C** không có tác dụng | Chỉ hoạt động khi bảng góp ý đang mở, để không cướp phím tắt của app |
+| Phím **C** không có tác dụng | Không hoạt động khi đang gõ (ô nhập liệu, textarea, select, vùng contenteditable), khi giữ ⌘/Ctrl/Alt (⌘C/Ctrl+C vẫn là copy), khi đang gõ dấu tiếng Việt chưa xong, hoặc khi ô góp ý đang mở. Khi widget nhận C, app sẽ không nhận phím đó nữa |
 
 ## Phát triển
 

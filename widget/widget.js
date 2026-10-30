@@ -7,6 +7,7 @@ const POLL_MS = 5000 // when the long-poll is down
 const SAFETY_POLL_MS = 30000 // while it is up, in case a change is ever missed
 const T = {
   title: 'Góp ý',
+  fabTitle: 'Góp ý · nhấn C ở bất kỳ đâu để góp ý nhanh',
   add: '+ Thêm góp ý (C)',
   cancelPick: 'Hủy chọn (Esc)',
   hint: 'Click vào phần tử, hoặc kéo chuột để khoanh vùng · Esc để thoát',
@@ -173,6 +174,18 @@ export function pageKey(loc) {
   return u.pathname + u.search
 }
 
+/**
+ * The C shortcut works on the whole page (checked: the qtw app has no global C shortcut; all its key handlers sit in
+ * inputs). Never while typing, never with ⌘/Ctrl/Alt (⌘C/Ctrl+C is copy), not on key repeat, not mid IME composition
+ * (Vietnamese Telex). `code` covers non-Latin layouts where the C key types another letter.
+ */
+export function isCommentShortcut(e) {
+  const t = e.target
+  const typing =
+    t?.nodeType === 1 && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!t.closest?.('[contenteditable=""], [contenteditable="true"]'))
+  return (e.key === 'c' || e.key === 'C' || e.code === 'KeyC') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && !e.isComposing && !typing
+}
+
 // ---- "your comment was handled" ----
 /** My threads that went open → resolved since the previous load (`prev`: id → status at that load). */
 export const resolvedSince = (prev, threads) => threads.filter((t) => t.mine && t.status === 'resolved' && prev.get(t.id) === 'open')
@@ -325,7 +338,7 @@ function mount() {
   const panel = h('aside', { class: 'panel', hidden: true })
   const fab = h('button', {
     class: 'fab',
-    title: T.title,
+    title: T.fabTitle,
     onclick: () => (state.picking ? setPicking(false) : ((state.open = true), render())),
   })
   const toast = h('div', { class: 'toast', hidden: true, role: 'status' })
@@ -499,7 +512,10 @@ function mount() {
   }
 
   // ---- comment mode ----
-  function setPicking(on) {
+  // Started with C while the panel was closed: stay out of the way after sending (the new pin is the confirmation).
+  let quickPick = false
+  function setPicking(on, byKey = false) {
+    if (on) quickPick = byKey && !state.open
     state.picking = on
     hint.hidden = !on
     if (on) document.head.append(pickStyle)
@@ -557,10 +573,12 @@ function mount() {
     'keydown',
     (e) => {
       if (e.key === 'Escape' && (composer || state.picking)) return composer ? closeComposer() : setPicking(false)
-      const t = e.composedPath()[0]
-      const typing = t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
-      // Only while the panel is open, so we never steal the app's own "c" shortcut.
-      if (state.open && (e.key === 'c' || e.key === 'C') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) setPicking(!state.picking)
+      if (composer) return // half-written comment: C must not throw it away
+      const { key, code, ctrlKey, metaKey, altKey, repeat, isComposing } = e
+      if (!isCommentShortcut({ key, code, ctrlKey, metaKey, altKey, repeat, isComposing, target: e.composedPath()[0] })) return
+      e.preventDefault()
+      e.stopImmediatePropagation() // the app does not also get this C
+      setPicking(!state.picking, true)
     },
     true,
   )
@@ -570,6 +588,7 @@ function mount() {
     const info = areaInfo ?? describe(target, x, y)
     const area = areaInfo ?? null
     const shot = captureView(target, area) // starts now, so it shows exactly what was picked; runs while they type
+    const stayClosed = quickPick
     const name = nameField('name:new')
     const ta = h('textarea', { rows: 3, maxlength: 5000, placeholder: T.placeholder })
     const send = act(async () => {
@@ -577,7 +596,7 @@ function mount() {
       const viewport = `${innerWidth}x${innerHeight}`
       const t = await api('', { method: 'POST', body: { url: state.url, ...info, viewport, author: author(name), body: ta.value } })
       closeComposer()
-      Object.assign(state, { open: true, filter: 'open', active: t.id })
+      Object.assign(state, { open: stayClosed ? state.open : true, filter: 'open', active: t.id })
       // Best effort: the comment is already saved; a failed capture/upload only means no picture.
       shot.then((blob) => blob && fetch(`${API}/${t.id}/screenshot`, { method: 'POST', headers: { ...client, 'content-type': blob.type }, body: blob }))
     })
@@ -693,7 +712,7 @@ function mount() {
 
     // While picking, the panel steps aside so every element is clickable; the fab becomes "cancel".
     fab.hidden = state.open && !state.picking
-    fab.title = state.picking ? T.cancelPick : T.title
+    fab.title = state.picking ? T.cancelPick : T.fabTitle
     fab.classList.toggle('picking', state.picking)
     fab.classList.toggle('fresh', unseen.length > 0 && !state.picking)
     fab.replaceChildren(...(state.picking ? ['✕'] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))))

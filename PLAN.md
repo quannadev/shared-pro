@@ -237,4 +237,8 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Tab ở nền: tiêu đề nhấp nháy `(n) ✓ …`, trả lại tiêu đề gốc khi quay lại. Long-poll vẫn tải dữ liệu khi tab ở nền.
   - Lúc đó không mở trang: chấm xanh trên nút 💬, nhãn "· n mới" ở tab Đã xong, badge **Mới** trên thẻ. "Đã xem" lưu trong `localStorage` với khóa `id:resolved_at`, nên mở lại rồi AI xử lý lần nữa thì lại tính là mới. Lần đầu dùng thì đánh dấu mọi thứ hiện có là đã xem, để không bị một loạt thông báo cũ.
   - Test helper (happy-dom). Chạy thật: thông báo, bấm mở đúng thread, badge Mới, tải lại không còn báo; tab ở nền được giả lập bằng cách ghi đè `document.hidden`, vì Browser pane luôn báo tab đang hiển thị.
+- **Phím C ở mọi nơi** (trước đây chỉ khi bảng góp ý đang mở). Đã kiểm tra mã nguồn app qtw: không có phím tắt C toàn cục, cả 11 bộ xử lý phím đều nằm trong ô nhập liệu.
+  - Không kích hoạt khi: đang gõ (input/textarea/select/contenteditable, kể cả trong shadow DOM), giữ ⌘/Ctrl/Alt, giữ phím lặp, đang gõ IME (Telex), hoặc ô góp ý đang mở (để không mất bản nháp). Dùng thêm `code === 'KeyC'` cho bàn phím không phải Latin. Khi nhận C, widget chặn sự kiện để app không nhận phím đó.
+  - Bắt đầu bằng C khi bảng đang đóng thì gửi xong bảng vẫn đóng.
+  - Đã thử bằng phím thật: C bật/tắt chế độ chọn, gõ "c" trong ô góp ý và trong ô nhập của app vẫn ra chữ, ⌘C không kích hoạt và app vẫn nhận được, gửi xong bảng vẫn đóng và có pin. Test 101/101.
 

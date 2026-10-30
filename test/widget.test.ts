@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, badgeTitle, belowViewport, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
+import { areaRect, badgeTitle, belowViewport, isCommentShortcut, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -198,4 +198,19 @@ test('tab title badge is added and removed without eating the app title', () => 
   assert.equal(badgeTitle('(2) ✓ Quản lý dự án', 3), '(3) ✓ Quản lý dự án', 'never stacks')
   assert.equal(stripBadge('(3) ✓ Quản lý dự án'), 'Quản lý dự án')
   assert.equal(stripBadge('(3) Inbox'), '(3) Inbox', "the app's own counters are left alone")
+})
+
+test('C starts commenting from anywhere, but never while typing, with modifiers, on repeat or mid-IME', () => {
+  const doc = page(`<input id="i"><textarea id="t"></textarea><select id="s"><option>a</option></select><div id="e" contenteditable="true"></div><p id="p">x</p>`)
+  const key = (init: Record<string, unknown>, target = doc.querySelector('#p')!) => ({ key: 'c', code: 'KeyC', ctrlKey: false, metaKey: false, altKey: false, repeat: false, isComposing: false, target, ...init })
+  assert.equal(isCommentShortcut(key({})), true)
+  assert.equal(isCommentShortcut(key({ key: 'C' })), true, 'caps lock / shift')
+  assert.equal(isCommentShortcut(key({ key: 'с', code: 'KeyC' })), true, 'Cyrillic layout: physical C key')
+  for (const sel of ['#i', '#t', '#s', '#e']) assert.equal(isCommentShortcut(key({}, doc.querySelector(sel)!)), false, `typing in ${sel}`)
+  assert.equal(isCommentShortcut(key({ metaKey: true })), false, '⌘C is copy')
+  assert.equal(isCommentShortcut(key({ ctrlKey: true })), false, 'Ctrl+C is copy')
+  assert.equal(isCommentShortcut(key({ altKey: true })), false)
+  assert.equal(isCommentShortcut(key({ repeat: true })), false, 'holding the key')
+  assert.equal(isCommentShortcut(key({ isComposing: true })), false, 'IME (e.g. Vietnamese Telex) composing')
+  assert.equal(isCommentShortcut(key({ key: 'x', code: 'KeyX' })), false)
 })
