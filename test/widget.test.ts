@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
+import { areaRect, belowViewport, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -155,4 +155,23 @@ test('area: box bigger than everything → body', () => {
   const doc = page(`<p>x</p>`)
   doc.querySelector('p')!.getBoundingClientRect = () => rect(0, 0, 10, 10)
   assert.equal(enclosing(doc.querySelector('p')!, rect(0, 0, 5000, 5000)).localName, 'body')
+})
+
+// Screenshot cost is ~1ms per cloned node on the main thread: a 9.7k-element page froze the tab for 13s.
+test('screenshot clones only what can be in the picture: elements entirely below the viewport become empty shells', () => {
+  const doc = page(`<header id="h"><b>top</b></header><main><p id="seen">x</p><ul id="list"><li>1</li><li>2</li><li>3</li></ul></main>`)
+  const at = (sel: string, top: number) => (doc.querySelector(sel)!.getBoundingClientRect = () => ({ top }) as DOMRect)
+  at('#h', 0)
+  at('main', 50)
+  at('#seen', 60)
+  at('#list', 2000) // far below an 800px viewport
+  const shell = (n: Element) => belowViewport(n, 800)
+  assert.equal(shell(doc.querySelector('#list')!), true)
+  assert.equal(shell(doc.querySelector('#seen')!), false)
+  assert.equal(shell(doc.body), false, 'never body/html')
+  // #list itself stays (removing whole rows/sections broke a real table's rendering), its 3 <li> are not visited
+  assert.equal(countCloned(doc.body, shell), 5)
+  assert.equal(keepInCapture(doc.querySelector('#list')!, 800), true)
+  assert.equal(keepInCapture(doc.querySelector('#list li')!, 800), false)
+  assert.equal(keepInCapture(doc.querySelector('#seen')!, 800), true)
 })

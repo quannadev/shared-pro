@@ -2,6 +2,7 @@
 // Everything visible lives in a shadow root so the app's CSS and ours never touch.
 
 const API = '/__sp/api/comments'
+const MAX_SHOT_NODES = 1500 // ≈ 2s of main thread at the measured ~1.35ms/node: under Chrome's "Page Unresponsive"
 const POLL_MS = 5000 // when the long-poll is down
 const SAFETY_POLL_MS = 30000 // while it is up, in case a change is ever missed
 const T = {
@@ -104,6 +105,30 @@ export function areaRect(r, t) {
   const width = (r.width * t.area_w) / 100
   const height = (r.height * t.area_h) / 100
   return { left, top, width, height, right: left + width, bottom: top + height }
+}
+
+/**
+ * Screenshots cost ~1ms of main-thread time per cloned node (a 9.7k-element page froze the tab for 13s), so an
+ * element entirely below the viewport is cloned as an empty shell: its contents cannot be in the picture. The shell
+ * itself is kept because removing whole elements (e.g. trailing table rows) blanked a real table's visible rows.
+ * Content above the viewport still has to be cloned (removing it would shift the layout).
+ */
+export function belowViewport(node, viewportHeight) {
+  const doc = node.ownerDocument
+  return node.nodeType === 1 && node !== doc.body && node !== doc.documentElement && node.getBoundingClientRect().top > viewportHeight + 100
+}
+
+/** Capture filter: keep a node unless its parent is an element entirely below the viewport (a shell). */
+export function keepInCapture(node, viewportHeight) {
+  const parent = node.parentElement
+  return !parent || !belowViewport(parent, viewportHeight)
+}
+
+/** How many elements a capture would clone under the same rule: shells count, their contents do not. */
+export function countCloned(root, isShell) {
+  let n = 0
+  for (const child of root.children) n += 1 + (isShell(child) ? 0 : countCloned(child, isShell))
+  return n
 }
 
 /** The page colour usually lives on <html> or <body>, which a DOM capture does not paint by itself (dark themes!). */
@@ -368,6 +393,9 @@ function mount() {
   async function captureView(target, area) {
     try {
       const box = rectFor(target, area)
+      const isShell = (el) => el === host || belowViewport(el, innerHeight)
+      // ponytail: still too big to clone without freezing (deep in a long page)? No picture beats a frozen tab.
+      if (countCloned(document.body, isShell) > MAX_SHOT_NODES) return null
       const { domToCanvas } = await import('/__sp/vendor/modern-screenshot.js')
       // ponytail: renders the DOM, not pixels: cross-origin images without CORS come out blank, and fixed
       // headers can be offset when the page is scrolled. Good enough to show the agent what was meant.
@@ -377,7 +405,7 @@ function mount() {
         scale: 1,
         backgroundColor: pageBackground(document),
         timeout: 3000, // per image: default 30s; a stuck decode (seen in background tabs) must not hold the upload
-        filter: (node) => node !== host,
+        filter: (node) => node !== host && keepInCapture(node, innerHeight),
         style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
       })
       const ctx = canvas.getContext('2d')
