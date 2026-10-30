@@ -28,6 +28,12 @@ before(async () => {
       res.write('<html><body>part1')
       return setTimeout(() => res.end('part2</body></html>'), 50)
     }
+    if (req.url?.startsWith('/csp')) {
+      // Next.js-style per-request nonce + strict-dynamic: only nonced scripts run, 'self' is ignored.
+      const csp = new URL(req.url, 'http://x').searchParams.get('h') ?? ''
+      res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': csp })
+      return res.end('<html><body>csp</body></html>')
+    }
     if (req.url === '/api') {
       res.writeHead(200, { 'content-type': 'application/json' })
       return res.end('{"ok":true}')
@@ -146,3 +152,25 @@ test('screenshot library is served same-origin for the widget to lazy-load', asy
   assert.match(res.headers.get('content-type')!, /javascript/)
   assert.match(await res.text(), /export \{[^}]*domToCanvas/)
 })
+
+const cspPage = async (csp: string) => (await fetch(`${base}/csp?h=${encodeURIComponent(csp)}`)).text()
+
+test('CSP with a nonce: the injected widget script carries the same nonce', async () => {
+  const body = await cspPage(`default-src 'self'; script-src 'self' 'nonce-YWEwN2Ix+Zj/I=' 'strict-dynamic' 'unsafe-eval'; style-src 'self'`)
+  assert.ok(body.endsWith(`<script type="module" nonce="YWEwN2Ix+Zj/I=" src="/__sp/widget.js"></script>`), body)
+})
+
+test('CSP nonce: script-src-elem wins over script-src, which wins over default-src', async () => {
+  assert.match(await cspPage(`default-src 'nonce-D'; script-src 'nonce-S'; script-src-elem 'nonce-E'`), /nonce="E"/)
+  assert.match(await cspPage(`default-src 'nonce-D'; script-src 'nonce-S'`), /nonce="S"/)
+  assert.match(await cspPage(`default-src 'self' 'nonce-D'`), /nonce="D"/)
+})
+
+test('no CSP nonce: plain script tag; a nonce with odd characters is never echoed into HTML', async () => {
+  assert.ok((await cspPage(`default-src 'self'`)).endsWith(SCRIPT))
+  assert.ok((await fetch(`${base}/page`).then((r) => r.text())).endsWith(SCRIPT))
+  const evil = await cspPage(`script-src 'nonce-a"><img src=x onerror=alert(1)>'`)
+  assert.doesNotMatch(evil, /onerror/)
+  assert.ok(evil.endsWith(SCRIPT))
+})
+

@@ -5,6 +5,22 @@ import { handleApi, shareCookie, type Changes } from './api.ts'
 import type { Store } from './store.ts'
 
 const SCRIPT = '<script type="module" src="/__sp/widget.js"></script>'
+
+/**
+ * Apps with a nonce CSP (Next.js middleware: script-src 'nonce-…' 'strict-dynamic') only run scripts carrying that
+ * request's nonce, so the widget tag reuses it: the app's policy stays as is. Looked up like the browser does
+ * (script-src-elem, then script-src, then default-src); only base64-ish nonces are ever written into the HTML.
+ */
+export function scriptTag(csp: string | string[] | undefined) {
+  const directives = new Map<string, string>()
+  for (const d of [csp ?? ''].flat().join(';').split(';')) {
+    const [name, ...values] = d.trim().split(/\s+/)
+    if (name && !directives.has(name.toLowerCase())) directives.set(name.toLowerCase(), values.join(' '))
+  }
+  const sources = ['script-src-elem', 'script-src', 'default-src'].map((n) => directives.get(n)).find((v) => v !== undefined)
+  const nonce = /'nonce-([A-Za-z0-9+/_=-]+)'/.exec(sources ?? '')?.[1]
+  return nonce ? `<script type="module" nonce="${nonce}" src="/__sp/widget.js"></script>` : SCRIPT
+}
 const WIDGET = new URL('../widget/widget.js', import.meta.url)
 // Self-contained ESM build (no imports), lazy-loaded by the widget only when someone actually comments.
 const SCREENSHOT_LIB = new URL(import.meta.resolve('modern-screenshot'))
@@ -53,7 +69,7 @@ export function createProxy({ target, store, token }: { target: string; store: S
       if (cookie) out['set-cookie'] = [...(out['set-cookie'] ?? []), cookie] // keep the app's own cookies
       res.writeHead(upRes.statusCode ?? 502, out)
       upRes.pipe(res, { end: !inject })
-      if (inject) upRes.on('end', () => res.end(SCRIPT))
+      if (inject) upRes.on('end', () => res.end(scriptTag(upRes.headers['content-security-policy'])))
     })
     upReq.on('error', (e) => {
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' })

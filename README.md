@@ -286,6 +286,7 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 | Pin không hiện, thẻ báo *"Không còn thấy phần tử"* | Phần tử đã bị xóa hoặc đổi cả vị trí lẫn nội dung, nên cả selector lẫn text đều không còn khớp. Nội dung góp ý và ảnh chụp vẫn còn trong thẻ |
 | `quick tunnel provisioning failed with status 429` | Cloudflare giới hạn số Quick Tunnel tạo liên tiếp. Đợi vài phút, hoặc dùng named tunnel |
 | Ảnh chụp thiếu hình, hoặc header cố định bị lệch | Ảnh được dựng lại từ DOM chứ không phải chụp pixel: ảnh từ tên miền khác không cho CORS sẽ trống, header `position: fixed` có thể lệch khi trang đã cuộn |
+| Console báo `Loading the script '…/__sp/widget.js' violates the following Content Security Policy directive` | App gửi CSP có nonce (thường là `'nonce-…' 'strict-dynamic'` của Next.js). Từ bản này proxy tự lấy nonce trong header CSP của từng trang gắn vào script widget, CSP của app giữ nguyên. Khởi động lại `shared-pro` để dùng bản mới. CSP khai báo bằng thẻ `<meta>` thì chưa được hỗ trợ |
 | Tính năng mới không chạy sau khi cập nhật | Khởi động lại `shared-pro` (và MCP). Widget tự lấy bản mới nhưng server đang chạy vẫn là code cũ |
 | Phím **C** không có tác dụng | Không hoạt động khi đang gõ (ô nhập liệu, textarea, select, vùng contenteditable), khi giữ ⌘/Ctrl/Alt (⌘C/Ctrl+C vẫn là copy), khi đang gõ dấu tiếng Việt chưa xong, hoặc khi ô góp ý đang mở. Khi widget nhận C, app sẽ không nhận phím đó nữa |
 

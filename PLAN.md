@@ -248,4 +248,8 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Giới hạn: dialog có `transform` thì `position: fixed` tính theo dialog. Đã kiểm tra: dialog của qtw không có transform, chỉ có `overflow-hidden` (không cắt được phần tử fixed).
   - Ẩn nút: rê chuột rồi bấm "–", link "Ẩn nút" trong bảng, hoặc ⌥/Alt+C (khớp theo `code`, vì Option+C trên Mac gõ ra "ç"). Khi ẩn, nút thu thành chấm mờ, bấm để hiện lại; dùng cách này để trên điện thoại không bị mất nút hẳn. Lưu trong `localStorage`. Khi ẩn, phím C vẫn dùng được và nút tạm hiện ✕ để hủy.
   - Đã thử thật: widget vào popup, bấm/focus được, pin nền ẩn, góp ý phần tử trong popup lưu đúng và popup không bị đóng; đóng popup thì widget về `body`; ⌥+C bật/tắt bằng phím thật; ẩn bằng "–", tải lại vẫn ẩn, bấm chấm để hiện lại. Test 104/104.
+- **CSP có nonce**: app `ai-assistant-fe` gửi `script-src 'self' 'nonce-…' 'strict-dynamic'`, nên trình duyệt bỏ qua `'self'` và chặn script widget không có nonce.
+  - Proxy đọc nonce từ header CSP của từng response HTML (ưu tiên `script-src-elem` → `script-src` → `default-src`, như trình duyệt) rồi gắn vào thẻ `<script>` chèn thêm; CSP của app giữ nguyên. Chỉ ghi vào HTML nonce gồm ký tự base64, có test với nonce độc hại.
+  - Đã thử thật trên app đó qua proxy test riêng: widget tải không lỗi CSP, style áp dụng, góp ý lưu được, ảnh chụp vẫn lấy được (`import()` thư viện chụp ảnh từ script đã có nonce được `strict-dynamic` cho phép).
+  - Chưa hỗ trợ: CSP khai báo bằng `<meta>`.
 
