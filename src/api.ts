@@ -31,8 +31,11 @@ export function shareCookie(req: http.IncomingMessage, token: string): string | 
   if (given !== null && sameSecret(given, token)) return `sp_token=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
 }
 
+// Proxy mode: cookie set by the share link. Embed mode: x-sp-token header (third-party cookies are blocked).
 function hasToken(req: http.IncomingMessage, token: string | undefined) {
   if (!token) return true
+  const header = req.headers['x-sp-token']
+  if (typeof header === 'string' && sameSecret(header, token)) return true
   const m = /(?:^|;\s*)sp_token=([^;]+)/.exec(req.headers.cookie ?? '')
   return !!m && sameSecret(m[1], token)
 }

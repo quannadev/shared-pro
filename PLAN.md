@@ -262,4 +262,12 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Kéo (di chuyển hơn 6px, dùng pointer capture) rồi thả: hút vào góc gần nhất theo góc phần tư, lưu `sp_corner`. Menu mở về phía giữa màn hình; thông báo và bảng góp ý đi theo phía của nút.
   - Trạng thái ẩn là icon nhỏ, mờ ở cùng góc, thay cho chấm xám; bỏ nút "–" khi rê chuột.
   - Đã thử thật kèm ảnh chụp: pill "2 góp ý", menu, kéo sang góc trên trái (lưu sau khi tải lại, cú click cuối lúc kéo không mở menu), bảng góp ý mở bên trái, menu xổ xuống, trạng thái ẩn rồi hiện lại, Esc và bấm ra ngoài đóng menu. Test 111/111.
+- **Chế độ embed (snippet nhúng)**, theo lựa chọn B của người dùng: `shared-pro embed --origin https://site [--origin …]`.
+  - Server không proxy trang nào (404), chỉ phục vụ `/__sp/*`. CORS theo danh sách origin khớp chính xác, không `*`, không gửi cookie. Trả lời preflight cho các header `x-sp-token`/`x-sp-client` và các method `PATCH`/`DELETE`.
+  - Script dạng module tải ở chế độ CORS, nên widget và thư viện chụp ảnh cũng có CORS header. Xác thực bằng header `x-sp-token`, vì cookie bên thứ ba bị trình duyệt chặn.
+  - Widget lấy địa chỉ server từ `import.meta.url` (API, thư viện, long-poll). Ở chế độ embed, widget lấy mã từ `?sp=` của website rồi lưu `localStorage`; không có mã thì không hiện. Ảnh thu nhỏ tải bằng `fetch` kèm header rồi hiển thị qua `blob:`, vì `<img>` không gửi được header.
+  - Không dùng chung được với `--target`/`--public`; Quick Tunnel thì CLI cảnh báo URL đổi mỗi lần chạy.
+  - **Bug thật tìm ra khi chạy cross-origin**: thư viện chụp ảnh được lưu cache 1 ngày từ lần tải cùng origin, không có `Vary: Origin`, nên lần dùng cho website khác bị chặn CORS. Đã sửa: luôn gửi `Vary: Origin` cho `/__sp/*` và đổi URL thư viện (`?v=2`) để bỏ qua bản cache cũ. Có test.
+  - Đã thử thật: website ở `localhost:3010`, server embed ở `localhost:3102` (khác origin). Người không có mã không thấy widget; người có link thì thấy, góp ý được (phím C), có pin, có nút Xóa, ảnh chụp tải lên và hiện qua `blob:`, không lỗi CORS. MCP đọc được kèm ảnh; AI resolve thì thông báo hiện ngay trên website. Cả repo 123/123.
+  - Thêm `--test-timeout=30000` cho `npm test`, để test bị treo thì báo lỗi thay vì chạy mãi.
 

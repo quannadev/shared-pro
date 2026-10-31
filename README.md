@@ -127,6 +127,31 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 
 > Phần này mới được kiểm tra với cloudflared giả lập và với cloudflared thật tới bước xác thực, chưa chạy trọn vẹn trên một tài khoản Cloudflare thật.
 
+## Góp ý trên website đã deploy (nhúng snippet)
+
+Dùng khi muốn góp ý trên website thật (staging, preview…) thay vì app ở `localhost`. Website chạy nguyên bản trên tên miền của nó (đăng nhập, API, CORS không bị ảnh hưởng); shared-pro chỉ phục vụ widget và API góp ý.
+
+1. Chạy server ở chế độ `embed`, trong thư mục code của website (để AI Agent sửa đúng code). Nên dùng named tunnel để URL cố định:
+
+   ```bash
+   shared-pro embed --origin https://staging.example.com --tunnel-name qtw-review --hostname review.example.com
+   ```
+
+   ```
+   snippet:    <script type="module" src="https://review.example.com/__sp/widget.js"></script>
+   share link: https://staging.example.com/?sp=…
+   ```
+
+2. Thêm dòng `snippet` vào HTML của website (bản staging) rồi deploy.
+3. Gửi `share link` (link tới chính website, kèm `?sp=`) cho người review. Trình duyệt lưu mã vào `localStorage` của website; lần sau mở không cần `?sp=` nữa.
+
+- **Người dùng bình thường của website không thấy gì**: widget chỉ hiện khi trình duyệt đã có mã chia sẻ.
+- `--origin` là danh sách website được phép nhúng (khớp chính xác, có thể lặp lại; không dùng `*`, không cookie). Mã chia sẻ đi trong header `x-sp-token`.
+- Website có CSP thì cần cho phép server shared-pro: thêm `https://review.example.com` vào `script-src` và `connect-src`, và `blob:` vào `img-src` (ảnh chụp). CSP dùng nonce thì gắn nonce vào thẻ snippet.
+- Website chạy HTTPS thì server cũng phải là HTTPS (tunnel), nếu không trình duyệt chặn vì mixed content. Quick Tunnel đổi URL mỗi lần chạy nên snippet trong website cũng phải đổi theo; CLI sẽ cảnh báo.
+- Không dùng được `--target` (website tự phục vụ trang của nó) và `--public` (cần mã để quyết định ai thấy widget).
+- MCP, ảnh chụp, realtime, thông báo khi AI xử lý xong đều hoạt động như chế độ proxy.
+
 ## Hướng dẫn cho người review
 
 1. Mở share link **ngay trong trình duyệt sẽ dùng để góp ý** (Safari, Chrome…). Trình duyệt nhận cookie từ token trong link. `?sp=…` vẫn nằm trên thanh địa chỉ, nên copy URL hoặc bấm "Mở trong Safari" từ Zalo/Messenger vẫn mang theo mã.
@@ -288,6 +313,7 @@ Share link là **URL công khai trỏ vào máy dev của bạn**. Chỉ gửi c
 | `quick tunnel provisioning failed with status 429` | Cloudflare giới hạn số Quick Tunnel tạo liên tiếp. Đợi vài phút, hoặc dùng named tunnel |
 | Ảnh chụp thiếu hình, hoặc header cố định bị lệch | Ảnh được dựng lại từ DOM chứ không phải chụp pixel: ảnh từ tên miền khác không cho CORS sẽ trống, header `position: fixed` có thể lệch khi trang đã cuộn |
 | Console báo `Loading the script '…/__sp/widget.js' violates the following Content Security Policy directive` | App gửi CSP có nonce (thường là `'nonce-…' 'strict-dynamic'` của Next.js). Từ bản này proxy tự lấy nonce trong header CSP của từng trang gắn vào script widget, CSP của app giữ nguyên. Khởi động lại `shared-pro` để dùng bản mới. CSP khai báo bằng thẻ `<meta>` thì chưa được hỗ trợ |
+| Chế độ embed: console báo `blocked by CORS policy` | Website hiện tại chưa nằm trong `--origin` (phải khớp chính xác cả `https://` lẫn cổng). Thêm `--origin` đúng rồi chạy lại |
 | Tính năng mới không chạy sau khi cập nhật | Khởi động lại `shared-pro` (và MCP). Widget tự lấy bản mới nhưng server đang chạy vẫn là code cũ |
 | Phím **C** không có tác dụng | Không hoạt động khi đang gõ (ô nhập liệu, textarea, select, vùng contenteditable), khi giữ ⌘/Ctrl/Alt (⌘C/Ctrl+C vẫn là copy), khi đang gõ dấu tiếng Việt chưa xong, hoặc khi ô góp ý đang mở. Khi widget nhận C, app sẽ không nhận phím đó nữa |
 

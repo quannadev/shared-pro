@@ -225,3 +225,53 @@ test('--local cannot be combined with a named tunnel', async () => {
   assert.equal((await once(cli, 'exit'))[0], 2)
   assert.match(err, /--local/)
 })
+
+// `shared-pro embed`: no proxy, just the widget + API for a site that includes our <script>.
+const runCli = (args: string[]) => {
+  const cli = spawn(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), ...args])
+  let out = ''
+  cli.stdout.on('data', (d) => (out += d))
+  cli.stderr.on('data', (d) => (out += d))
+  return { cli, out: () => out }
+}
+
+test('embed: argument errors (no --origin, not an origin, --target, --public)', async () => {
+  for (const [args, msg] of [
+    [['embed'], /--origin/],
+    [['embed', '--origin', 'https://staging.example.com/app'], /origin/],
+    [['embed', '--origin', 'https://staging.example.com', '--target', '3000'], /--target/],
+    [['embed', '--origin', 'https://staging.example.com', '--public'], /--public/],
+  ] as const) {
+    const r = runCli([...args, '--dir', mkdtempSync(join(tmpdir(), 'sp-embed-'))])
+    assert.equal((await once(r.cli, 'exit'))[0], 2, args.join(' '))
+    assert.match(r.out(), msg, args.join(' '))
+  }
+})
+
+test('embed --no-tunnel: prints the snippet and the share link on the site; pages are not proxied', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'sp-embed-'))
+  const r = runCli(['embed', '--origin', 'https://staging.example.com', '--path', '/dashboard', '--port', '0', '--no-tunnel', '--dir', data])
+  for (let i = 0; i < 100 && !/share link:/.test(r.out()); i++) await new Promise((res) => setTimeout(res, 30))
+  try {
+    const port = /server:\s+http:\/\/localhost:(\d+)/.exec(r.out())?.[1]
+    const token = readFileSync(join(data, '.shared-pro', 'token'), 'utf8').trim()
+    assert.match(r.out(), new RegExp(`<script type="module" src="http://localhost:${port}/__sp/widget\\.js"></script>`), r.out())
+    assert.match(r.out(), new RegExp(`share link: https://staging\\.example\\.com/dashboard\\?sp=${token}`))
+    assert.equal((await fetch(`http://localhost:${port}/dashboard`)).status, 404)
+  } finally {
+    r.cli.kill()
+    await once(r.cli, 'exit')
+  }
+})
+
+test('embed with a quick tunnel: snippet uses the tunnel URL and warns that it changes on restart', async () => {
+  const r = runCli(['embed', '--origin', 'https://staging.example.com', '--port', '0', '--dir', mkdtempSync(join(tmpdir(), 'sp-embed-')), '--cloudflared', fakeBin('embed-quick')])
+  for (let i = 0; i < 100 && !/share link:/.test(r.out()); i++) await new Promise((res) => setTimeout(res, 30))
+  try {
+    assert.match(r.out(), new RegExp(`src="${URL_IN_FIXTURE.replace(/\./g, '\\.')}/__sp/widget\\.js"`))
+    assert.match(r.out(), /changes every restart[\s\S]*--tunnel-name/)
+  } finally {
+    r.cli.kill('SIGTERM')
+    await once(r.cli, 'exit')
+  }
+})

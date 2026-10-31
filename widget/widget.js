@@ -1,7 +1,16 @@
 // shared-pro review widget. Plain ES module served as-is from /__sp/widget.js (no build step).
 // Everything visible lives in a shadow root so the app's CSS and ours never touch.
 
-const API = '/__sp/api/comments'
+// Proxy mode: the page and the widget share an origin. Embed mode: a site includes our <script>, so every request
+// goes to the origin the script came from, authenticated by the share token header (no third-party cookies).
+export const serverUrl = (path, scriptUrl = import.meta.url) => new URL(path, scriptUrl).href
+export const isEmbedded = (scriptUrl, pageOrigin) => new URL(scriptUrl).origin !== pageOrigin
+/** The ?sp= share token on the page URL, only if it looks like one. */
+export function shareTokenFrom(href) {
+  const v = new URL(href).searchParams.get('sp')
+  return v && /^[A-Za-z0-9_-]{8,128}$/.test(v) ? v : null
+}
+const API = serverUrl('/__sp/api/comments')
 const MAX_SHOT_NODES = 1500 // ≈ 2s of main thread at the measured ~1.35ms/node: under Chrome's "Page Unresponsive"
 const POLL_MS = 5000 // when the long-poll is down
 const SAFETY_POLL_MS = 30000 // while it is up, in case a change is ever missed
@@ -378,6 +387,14 @@ const session = kv(() => sessionStorage) // survives the navigation to another p
 
 function mount() {
   if (window.__SP_MOUNTED) return
+  // Embed mode: only reviewers who opened the site with ?sp=TOKEN (kept per site in localStorage) get the widget;
+  // everyone else using the site sees nothing.
+  const embedded = isEmbedded(import.meta.url, location.origin)
+  if (embedded) {
+    const fromLink = shareTokenFrom(location.href)
+    if (fromLink) store.set('sp_token', fromLink)
+    if (!store.get('sp_token')) return
+  }
   window.__SP_MOUNTED = true
 
   const state = {
@@ -513,7 +530,25 @@ function mount() {
   if (!/^[a-f0-9]{32}$/.test(store.get('sp_client'))) {
     store.set('sp_client', [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join(''))
   }
-  const client = { 'x-sp-client': store.get('sp_client') }
+  const client = { 'x-sp-client': store.get('sp_client'), ...(embedded ? { 'x-sp-token': store.get('sp_token') } : {}) }
+
+  // Screenshots: <img src> cannot carry the token header, so fetch with headers and show a blob: URL (cached).
+  const shotUrls = new Map() // thread id → Promise<blob: URL | null>
+  function shotThumb(t) {
+    const img = h('img', { alt: T.screenshot })
+    const link = h('a', { target: '_blank', rel: 'noopener', class: 'shot' }, img)
+    if (!shotUrls.has(t.id)) {
+      shotUrls.set(
+        t.id,
+        fetch(`${API}/${t.id}/screenshot`, { headers: client })
+          .then((r) => (r.ok ? r.blob() : null))
+          .then((b) => b && URL.createObjectURL(b))
+          .catch(() => null),
+      )
+    }
+    shotUrls.get(t.id).then((url) => url && ((img.src = url), (link.href = url)))
+    return link
+  }
 
   async function api(path, init) {
     const res = await fetch(
@@ -653,7 +688,8 @@ function mount() {
       const isShell = (el) => el === host || belowViewport(el, innerHeight)
       // ponytail: still too big to clone without freezing (deep in a long page)? No picture beats a frozen tab.
       if (countCloned(document.body, isShell) > MAX_SHOT_NODES) return null
-      const { domToCanvas } = await import('/__sp/vendor/modern-screenshot.js')
+      // ?v= busts caches holding an older copy (one served before responses carried Vary: Origin broke embeds).
+      const { domToCanvas } = await import(serverUrl('/__sp/vendor/modern-screenshot.js?v=2'))
       // ponytail: renders the DOM, not pixels: cross-origin images without CORS come out blank, and fixed
       // headers can be offset when the page is scrolled. Good enough to show the agent what was meant.
       const canvas = await domToCanvas(document.documentElement, {
@@ -1015,8 +1051,7 @@ function mount() {
       state.scope === 'all' && h('p', { class: 'page', title: t.url }, t.url === state.url ? `${t.url} · ${T.here}` : `${t.url} ↗`),
       t.url === state.url && !anchorOf(t) && h('p', { class: 'warn' }, T.missing),
       t.screenshot &&
-        h('a', { href: `${API}/${t.id}/screenshot`, target: '_blank', rel: 'noopener', class: 'shot' },
-          h('img', { src: `${API}/${t.id}/screenshot`, alt: T.screenshot, loading: 'lazy' })),
+        shotThumb(t),
       t.replies.map((r) =>
         h(
           'div',
@@ -1068,7 +1103,7 @@ function mount() {
   ;(async function watchChanges() {
     for (;;) {
       try {
-        const res = await fetch(`/__sp/api/changes?since=${version}`)
+        const res = await fetch(serverUrl(`/__sp/api/changes?since=${version}`), { headers: client })
         if (res.status === 401) return // load() already shows the token banner
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const next = (await res.json()).version

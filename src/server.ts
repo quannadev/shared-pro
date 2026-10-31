@@ -26,15 +26,23 @@ const WIDGET = new URL('../widget/widget.js', import.meta.url)
 const SCREENSHOT_LIB = new URL(import.meta.resolve('modern-screenshot'))
 const HOP = ['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-connection', 'te', 'trailer']
 
-export function createProxy({ target, store, token }: { target: string; store: Store; token?: string }) {
-  const t = new URL(target)
-  const port = Number(t.port) || 80
+const CORS_METHODS = 'GET, POST, PATCH, DELETE'
+const CORS_HEADERS = 'content-type, x-sp-token, x-sp-client'
+
+/**
+ * `target`: proxy that app and inject the widget into its pages. Without it (embed mode) only /__sp/* is served, for
+ * sites that include <script type="module" src="https://<server>/__sp/widget.js"> themselves; `origins` is the
+ * exact allowlist of those sites for CORS (never "*", never credentials: auth is the x-sp-token header).
+ */
+export function createProxy({ target, store, token, origins = [] }: { target?: string; store: Store; token?: string; origins?: string[] }) {
+  const t = target ? new URL(target) : null
+  const port = Number(t?.port) || 80
   // Host → target (Vite allowedHosts). Origin → target only if the browser saw it as same-origin,
   // so Next's dev cross-origin guard passes for the tunnel but still blocks foreign sites.
   const rewrite = (name: string, value: string, host: string | undefined) => {
     const k = name.toLowerCase()
-    if (k === 'host') return t.host
-    if (k === 'origin' && URL.canParse(value) && new URL(value).host === host) return t.origin
+    if (k === 'host') return t!.host
+    if (k === 'origin' && URL.canParse(value) && new URL(value).host === host) return t!.origin
     return value
   }
 
@@ -45,6 +53,16 @@ export function createProxy({ target, store, token }: { target: string; store: S
   const server = http.createServer((req, res) => {
     const cookie = token && shareCookie(req, token)
     if (req.url?.startsWith('/__sp/')) {
+      const siteOrigin = req.headers.origin
+      const allowed = !!siteOrigin && origins.includes(siteOrigin)
+      // Always vary on Origin: a copy cached without CORS headers (same-origin load) must never be reused cross-origin.
+      res.setHeader('vary', 'Origin')
+      if (allowed) res.setHeader('access-control-allow-origin', siteOrigin)
+      if (req.method === 'OPTIONS') {
+        if (!allowed) return res.writeHead(403).end()
+        res.writeHead(204, { 'access-control-allow-methods': CORS_METHODS, 'access-control-allow-headers': CORS_HEADERS, 'access-control-max-age': '600' })
+        return res.end()
+      }
       if (req.url.startsWith('/__sp/api/')) return void handleApi(req, res, store, token, changes)
       if (req.url.startsWith('/__sp/vendor/modern-screenshot.js')) {
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' })
@@ -56,6 +74,10 @@ export function createProxy({ target, store, token }: { target: string; store: S
         return res.end(readFileSync(WIDGET))
       }
       return res.writeHead(404).end()
+    }
+    if (!t) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      return res.end('shared-pro embed server: only /__sp/* lives here. Add the widget <script> to your site instead.')
     }
     const headers: http.OutgoingHttpHeaders = {}
     for (const [k, v] of Object.entries(req.headers)) headers[k] = typeof v === 'string' ? rewrite(k, v, req.headers.host) : v
@@ -79,6 +101,7 @@ export function createProxy({ target, store, token }: { target: string; store: S
   })
 
   server.on('upgrade', (req, socket, head) => {
+    if (!t) return socket.destroy() // embed mode proxies nothing, WebSockets included
     const up = net.connect(port, t.hostname, () => {
       let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`
       for (let i = 0; i < req.rawHeaders.length; i += 2) {

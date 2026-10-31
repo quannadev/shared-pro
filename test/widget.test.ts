@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, badgeTitle, belowViewport, isCommentShortcut, launcherLabel, nearestCorner, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
+import { areaRect, badgeTitle, belowViewport, isCommentShortcut, isEmbedded, serverUrl, shareTokenFrom, launcherLabel, nearestCorner, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -261,4 +261,22 @@ test('launcherLabel: like "1 Issue · 1 Insight", empty when nothing to report',
   assert.equal(launcherLabel(3, 0), '3 góp ý')
   assert.equal(launcherLabel(3, 1), '3 góp ý · 1 mới')
   assert.equal(launcherLabel(0, 2), '2 mới')
+})
+
+// Embed mode: the widget is loaded from the shared-pro server by another site, so every request goes to the origin
+// the script came from, and the reviewer's share token comes from ?sp= on the site's URL (no third-party cookies).
+test('serverUrl: API/vendor paths resolve against the script origin, not the page', () => {
+  assert.equal(serverUrl('/__sp/api/comments', 'https://review.example.com/__sp/widget.js'), 'https://review.example.com/__sp/api/comments')
+  assert.equal(serverUrl('/__sp/api/comments', 'http://localhost:3100/__sp/widget.js'), 'http://localhost:3100/__sp/api/comments')
+})
+
+test('isEmbedded: script origin differs from the page origin', () => {
+  assert.equal(isEmbedded('https://review.example.com/__sp/widget.js', 'https://staging.example.com'), true)
+  assert.equal(isEmbedded('http://localhost:3100/__sp/widget.js', 'http://localhost:3100'), false, 'proxy mode')
+})
+
+test('shareTokenFrom: the ?sp= value of the page URL, or null', () => {
+  assert.equal(shareTokenFrom('https://staging.example.com/dashboard?tab=2&sp=abc_DEF-123'), 'abc_DEF-123')
+  assert.equal(shareTokenFrom('https://staging.example.com/dashboard'), null)
+  assert.equal(shareTokenFrom('https://staging.example.com/?sp=%3Cscript%3E'), null, 'only token-shaped values')
 })

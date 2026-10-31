@@ -14,6 +14,9 @@ const USAGE = `usage:
   shared-pro [start] --target 3000 [--port 3100] [--path /base] [--dir .] [--public] [--no-tunnel] [--cloudflared bin]
                     [--local]   this machine only: no tunnel, listens on 127.0.0.1 (--no-tunnel alone still answers the LAN)
                     [--tunnel-name NAME --hostname review.example.com]   fixed URL via your own named tunnel
+  shared-pro embed --origin https://staging.example.com [--origin …] [--port] [--path] [--dir] [tunnel flags as above]
+                                serve only the widget + API for a site that includes
+                                <script type="module" src="https://<server>/__sp/widget.js"></script> itself
   shared-pro mcp [--dir .]      MCP server on stdio for AI agents (reads <dir>/.shared-pro/comments.db)`
 
 const usageError = (msg: string): never => {
@@ -27,7 +30,8 @@ function parse() {
       allowNegative: true,
       allowPositionals: true,
       options: {
-        target: { type: 'string', default: '3000' },
+        target: { type: 'string' }, // default 3000 applied in start(): embed must see whether it was given
+        origin: { type: 'string', multiple: true }, // embed: sites allowed to load the widget (CORS allowlist)
         port: { type: 'string', default: '3100' },
         dir: { type: 'string', default: process.cwd() },
         path: { type: 'string', default: '/' }, // page the share link opens, e.g. your Next basePath
@@ -45,7 +49,14 @@ function parse() {
 }
 const { values, positionals } = parse()
 const command = positionals[0] ?? 'start'
-if (!['start', 'mcp'].includes(command) || positionals.length > 1) usageError(`unknown command: ${positionals.join(' ')}`)
+if (!['start', 'embed', 'mcp'].includes(command) || positionals.length > 1) usageError(`unknown command: ${positionals.join(' ')}`)
+const origins = values.origin ?? []
+if (command === 'embed') {
+  if (!origins.length) usageError('embed needs --origin https://your-site (the site that includes the widget <script>)')
+  for (const o of origins) if (!URL.canParse(o) || new URL(o).origin !== o) usageError(`--origin must be an origin like https://staging.example.com, got ${o}`)
+  if (values.target) usageError('embed proxies nothing: drop --target (your site serves its own pages)')
+  if (values.public) usageError('embed needs the share token (it decides who sees the widget): drop --public')
+}
 const tunnelName = values['tunnel-name']
 const hostname = values.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '')
 if (tunnelName && !hostname) usageError('--tunnel-name needs --hostname (the DNS name you routed to that tunnel)')
@@ -65,11 +76,12 @@ if (command === 'mcp') {
   // stdout is the protocol channel: nothing else may print to it in this mode.
   await createMcpServer(store).connect(new StdioServerTransport())
 } else {
-  start()
+  start(command === 'embed')
 }
 
-function start() {
-  const target = /^\d+$/.test(values.target!) ? `http://localhost:${values.target}` : values.target!
+function start(embed: boolean) {
+  const targetArg = values.target ?? '3000'
+  const target = embed ? undefined : /^\d+$/.test(targetArg) ? `http://localhost:${targetArg}` : targetArg
 
   // Persisted so links already sent to reviewers survive a restart.
   const tokenFile = join(dataDir, 'token')
@@ -95,18 +107,26 @@ function start() {
     )
   }
 
-  const server = createProxy({ target, store, token })
+  const server = createProxy({ target, store, token, origins })
+  // Embed: reviewers open the site itself with ?sp=, and the site's HTML carries our <script>.
+  const announce = (serverOrigin: string) => {
+    if (embed) {
+      console.log(`snippet:    <script type="module" src="${serverOrigin}/__sp/widget.js"></script>`)
+      for (const o of origins) console.log(`share link: ${o}${values.path}?sp=${token}`)
+    } else console.log(`share link: ${link(serverOrigin)}`)
+  }
   server.on('error', (e: NodeJS.ErrnoException) => {
     console.error(e.code === 'EADDRINUSE' ? `shared-pro: port ${values.port} is already in use, pick another with --port` : `shared-pro: ${e.message}`)
     process.exit(1)
   })
   server.listen(Number(values.port), listenHost, async () => {
     const { port } = server.address() as AddressInfo
-    console.log(`proxy:      http://localhost:${port} → ${target}`)
+    if (embed) console.log(`server:     http://localhost:${port} (embed: widget + API for ${origins.join(', ')})`)
+    else console.log(`proxy:      http://localhost:${port} → ${target}`)
     console.log(`comments:   ${join(dataDir, 'comments.db')}`)
-    console.log(`local link: ${link(`http://localhost:${port}`)}`)
+    if (!embed) console.log(`local link: ${link(`http://localhost:${port}`)}`)
     if (values.local) console.log('mode:       local only (127.0.0.1): no tunnel, other devices cannot reach it')
-    if (!useTunnel) return
+    if (!useTunnel) return embed ? announce(`http://localhost:${port}`) : undefined
     console.log('tunnel:     starting cloudflared…')
     const t = startTunnel({ port, bin: values.cloudflared, name: tunnelName, hostname })
     stopTunnel = t.stop
@@ -116,7 +136,11 @@ function start() {
         console.error(`tunnel:     cloudflared exited (code ${code}), share link is dead. Restart shared-pro.`)
         process.exit(1)
       })
-      console.log(`share link: ${link(url)}`)
+      announce(url)
+      if (embed && !tunnelName) {
+        console.log('            warning: this quick-tunnel URL changes every restart, so the snippet in your site would')
+        console.log('            have to change too. Use a fixed URL: --tunnel-name NAME --hostname review.example.com')
+      }
       if (!token) console.log('            (--public: anyone with this URL can read and write comments)')
     } catch (e) {
       console.error(`tunnel:     ${(e as Error).message}`)
