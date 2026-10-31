@@ -160,6 +160,23 @@ export function pageBackground(doc) {
   return [doc.documentElement, doc.body].map((el) => view.getComputedStyle(el).backgroundColor).find((c) => !isClear(c)) ?? '#ffffff'
 }
 
+/**
+ * modern-screenshot options for a picture of the viewport. restoreScrollPosition (off by default) keeps the scroll
+ * of inner scrollers: without it a chat list scrolled to its end was cloned at the top, all empty virtualised spacer.
+ * It also shifts the content of <html> by the page scroll, which is why there is no translate of our own.
+ */
+export function captureOptions(win, backgroundColor, filter) {
+  return {
+    width: win.innerWidth,
+    height: win.innerHeight,
+    scale: 1,
+    backgroundColor,
+    timeout: 3000, // per image: default 30s; a stuck decode (seen in background tabs) must not hold the upload
+    filter,
+    features: { restoreScrollPosition: true },
+  }
+}
+
 const norm = (s) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
 
 /**
@@ -692,15 +709,8 @@ function mount() {
       const { domToCanvas } = await import(serverUrl('/__sp/vendor/modern-screenshot.js?v=2'))
       // ponytail: renders the DOM, not pixels: cross-origin images without CORS come out blank, and fixed
       // headers can be offset when the page is scrolled. Good enough to show the agent what was meant.
-      const canvas = await domToCanvas(document.documentElement, {
-        width: innerWidth,
-        height: innerHeight,
-        scale: 1,
-        backgroundColor: pageBackground(document),
-        timeout: 3000, // per image: default 30s; a stuck decode (seen in background tabs) must not hold the upload
-        filter: (node) => node !== host && keepInCapture(node, innerHeight),
-        style: { transform: `translate(${-scrollX}px, ${-scrollY}px)` },
-      })
+      const filter = (node) => node !== host && keepInCapture(node, innerHeight)
+      const canvas = await domToCanvas(document.documentElement, captureOptions(window, pageBackground(document), filter))
       const ctx = canvas.getContext('2d')
       ctx.strokeStyle = '#ef4444'
       ctx.lineWidth = 3

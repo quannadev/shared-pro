@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, badgeTitle, belowViewport, isCommentShortcut, isEmbedded, serverUrl, shareTokenFrom, launcherLabel, nearestCorner, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
+import { areaRect, captureOptions, badgeTitle, belowViewport, isCommentShortcut, isEmbedded, serverUrl, shareTokenFrom, launcherLabel, nearestCorner, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -279,4 +279,16 @@ test('shareTokenFrom: the ?sp= value of the page URL, or null', () => {
   assert.equal(shareTokenFrom('https://staging.example.com/dashboard?tab=2&sp=abc_DEF-123'), 'abc_DEF-123')
   assert.equal(shareTokenFrom('https://staging.example.com/dashboard'), null)
   assert.equal(shareTokenFrom('https://staging.example.com/?sp=%3Cscript%3E'), null, 'only token-shaped values')
+})
+
+test('captureOptions: inner scroll containers keep their scroll position, the page scroll is applied once', () => {
+  // Found on a chat page: its message list is its own scroller (react-virtuoso). The library clones it at scrollTop 0
+  // unless restoreScrollPosition is on, so the picture showed the list's empty top spacer instead of the messages.
+  const win = { innerWidth: 1512, innerHeight: 861 }
+  const filter = () => true
+  const o = captureOptions(win, '#16171d', filter)
+  assert.equal(o.features.restoreScrollPosition, true)
+  // That feature also offsets <html> by the page scroll; a translate of our own would shift the picture twice.
+  assert.equal(o.style, undefined)
+  assert.deepEqual([o.width, o.height, o.backgroundColor, o.filter], [1512, 861, '#16171d', filter])
 })
