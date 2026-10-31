@@ -185,3 +185,43 @@ test('CLI warns when --dir is not a project folder (e.g. started from $HOME)', a
   writeFileSync(join(project, 'package.json'), '{}')
   assert.doesNotMatch(await start(project), /not a project folder/)
 })
+
+test('--local: no tunnel at all and the proxy only answers on this machine (127.0.0.1)', async () => {
+  const { networkInterfaces } = await import('node:os')
+  const { connect } = await import('node:net')
+  const bin = fakeBin('never-started')
+  const cli = spawn(process.execPath, [
+    join(import.meta.dirname, '..', 'src', 'cli.ts'),
+    '--target', '1', '--port', '0', '--local', '--dir', mkdtempSync(join(tmpdir(), 'sp-local-')), '--cloudflared', bin,
+  ])
+  let out = ''
+  cli.stdout.on('data', (d) => (out += d))
+  cli.stderr.on('data', (d) => (out += d))
+  for (let i = 0; i < 100 && !/local link:/.test(out); i++) await new Promise((r) => setTimeout(r, 30))
+  const port = Number(/proxy:\s+http:\/\/localhost:(\d+)/.exec(out)?.[1])
+  const reach = (host: string) =>
+    new Promise<boolean>((r) => {
+      const s = connect(port, host, () => (s.destroy(), r(true)))
+      s.on('error', () => r(false))
+    })
+  try {
+    assert.ok(port > 0, out)
+    assert.match(out, /local only/)
+    assert.doesNotMatch(out, /tunnel:/)
+    assert.equal(existsSync(`${bin}.pid`), false, 'cloudflared never started')
+    assert.equal(await reach('127.0.0.1'), true)
+    const lan = Object.values(networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)?.address
+    if (lan) assert.equal(await reach(lan), false, `not reachable from the LAN (${lan})`)
+  } finally {
+    cli.kill()
+    await once(cli, 'exit')
+  }
+})
+
+test('--local cannot be combined with a named tunnel', async () => {
+  const cli = spawn(process.execPath, [join(import.meta.dirname, '..', 'src', 'cli.ts'), '--local', '--tunnel-name', 'x', '--hostname', 'a.example.com'])
+  let err = ''
+  cli.stderr.on('data', (d) => (err += d))
+  assert.equal((await once(cli, 'exit'))[0], 2)
+  assert.match(err, /--local/)
+})

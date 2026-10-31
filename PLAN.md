@@ -252,4 +252,8 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Proxy đọc nonce từ header CSP của từng response HTML (ưu tiên `script-src-elem` → `script-src` → `default-src`, như trình duyệt) rồi gắn vào thẻ `<script>` chèn thêm; CSP của app giữ nguyên. Chỉ ghi vào HTML nonce gồm ký tự base64, có test với nonce độc hại.
   - Đã thử thật trên app đó qua proxy test riêng: widget tải không lỗi CSP, style áp dụng, góp ý lưu được, ảnh chụp vẫn lấy được (`import()` thư viện chụp ảnh từ script đã có nonce được `strict-dynamic` cho phép).
   - Chưa hỗ trợ: CSP khai báo bằng `<meta>`.
+- **`--local` (chỉ máy này)**:
+  - Đã đo: `--no-tunnel` vẫn nghe trên `*:port` (mọi card mạng), nên máy cùng Wi-Fi vào được qua IP LAN (trả 200).
+  - `--local` bỏ hẳn tunnel và gọi `listen(port, '127.0.0.1')`. Không dùng chung với `--tunnel-name`. `--no-tunnel` giữ nguyên hành vi cũ cho ai cần thử trên điện thoại cùng mạng.
+  - Đã thử thật: `localhost` và `127.0.0.1` trả 200, IP LAN bị từ chối, widget chạy bình thường trên app có CSP. Test kiểm tra cả việc không khởi động cloudflared và IP LAN không kết nối được.
 

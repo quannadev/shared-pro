@@ -12,6 +12,7 @@ import { startTunnel } from './tunnel.ts'
 
 const USAGE = `usage:
   shared-pro [start] --target 3000 [--port 3100] [--path /base] [--dir .] [--public] [--no-tunnel] [--cloudflared bin]
+                    [--local]   this machine only: no tunnel, listens on 127.0.0.1 (--no-tunnel alone still answers the LAN)
                     [--tunnel-name NAME --hostname review.example.com]   fixed URL via your own named tunnel
   shared-pro mcp [--dir .]      MCP server on stdio for AI agents (reads <dir>/.shared-pro/comments.db)`
 
@@ -32,6 +33,7 @@ function parse() {
         path: { type: 'string', default: '/' }, // page the share link opens, e.g. your Next basePath
         public: { type: 'boolean', default: false },
         tunnel: { type: 'boolean', default: true },
+        local: { type: 'boolean', default: false },
         cloudflared: { type: 'string', default: 'cloudflared' },
         'tunnel-name': { type: 'string' },
         hostname: { type: 'string' },
@@ -48,6 +50,10 @@ const tunnelName = values['tunnel-name']
 const hostname = values.hostname?.replace(/^https?:\/\//, '').replace(/\/+$/, '')
 if (tunnelName && !hostname) usageError('--tunnel-name needs --hostname (the DNS name you routed to that tunnel)')
 if (hostname && !tunnelName) usageError('--hostname only applies together with --tunnel-name')
+if (values.local && tunnelName) usageError('--local means no tunnel: drop --tunnel-name/--hostname, or drop --local')
+// Without a host, listen() takes every interface, so --no-tunnel alone still answers anyone on the same Wi-Fi.
+const listenHost = values.local ? '127.0.0.1' : undefined
+const useTunnel = values.tunnel && !values.local
 if (tunnelName && !/^[\w.-]+$/.test(tunnelName)) usageError(`invalid --tunnel-name: ${tunnelName}`)
 if (hostname && !/^[a-z0-9.-]+$/i.test(hostname)) usageError(`invalid --hostname: ${values.hostname}`)
 
@@ -94,12 +100,13 @@ function start() {
     console.error(e.code === 'EADDRINUSE' ? `shared-pro: port ${values.port} is already in use, pick another with --port` : `shared-pro: ${e.message}`)
     process.exit(1)
   })
-  server.listen(Number(values.port), async () => {
+  server.listen(Number(values.port), listenHost, async () => {
     const { port } = server.address() as AddressInfo
     console.log(`proxy:      http://localhost:${port} → ${target}`)
     console.log(`comments:   ${join(dataDir, 'comments.db')}`)
     console.log(`local link: ${link(`http://localhost:${port}`)}`)
-    if (!values.tunnel) return
+    if (values.local) console.log('mode:       local only (127.0.0.1): no tunnel, other devices cannot reach it')
+    if (!useTunnel) return
     console.log('tunnel:     starting cloudflared…')
     const t = startTunnel({ port, bin: values.cloudflared, name: tunnelName, hostname })
     stopTunnel = t.stop

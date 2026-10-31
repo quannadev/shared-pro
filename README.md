@@ -95,7 +95,8 @@ shared-pro mcp [--dir .]          MCP server qua stdio cho AI Agent
 | `--path` | `/` | Trang mà share link mở ra, ví dụ `basePath` của Next |
 | `--dir` | thư mục hiện tại | Nơi tạo `.shared-pro/` (DB góp ý + token). `start` và `mcp` phải dùng **cùng** `--dir` |
 | `--public` | tắt | Không dùng token, ai có URL cũng xem và viết góp ý được |
-| `--no-tunnel` | | Chỉ chạy proxy ở local, không mở cloudflared |
+| `--local` | tắt | **Chỉ máy này**: không mở tunnel và chỉ nghe trên `127.0.0.1`, nên máy khác trong mạng không vào được. Dùng khi chỉ bạn và AI Agent góp ý/sửa trên máy mình |
+| `--no-tunnel` | | Không mở cloudflared, nhưng proxy **vẫn nghe trên mọi card mạng**: người cùng Wi-Fi vào được qua `http://<IP-LAN>:3100`. Dùng khi muốn thử trên điện thoại cùng mạng |
 | `--cloudflared` | `cloudflared` | Đường dẫn tới binary cloudflared nếu không có trong `PATH` |
 | `--tunnel-name` | | Dùng named tunnel của bạn (URL cố định) thay cho Quick Tunnel. Đi kèm `--hostname` |
 | `--hostname` | | Tên miền đã trỏ vào named tunnel đó, ví dụ `review.example.com` |
