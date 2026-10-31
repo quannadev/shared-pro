@@ -256,4 +256,10 @@ Mỗi phần có test trước, chạy thật trong browser, commit riêng. Cả
   - Đã đo: `--no-tunnel` vẫn nghe trên `*:port` (mọi card mạng), nên máy cùng Wi-Fi vào được qua IP LAN (trả 200).
   - `--local` bỏ hẳn tunnel và gọi `listen(port, '127.0.0.1')`. Không dùng chung với `--tunnel-name`. `--no-tunnel` giữ nguyên hành vi cũ cho ai cần thử trên điện thoại cùng mạng.
   - Đã thử thật: `localhost` và `127.0.0.1` trả 200, IP LAN bị từ chối, widget chạy bình thường trên app có CSP. Test kiểm tra cả việc không khởi động cloudflared và IP LAN không kết nối được.
+- **Nút góp ý kiểu nút dev tools của Next.js** (theo yêu cầu: nút cũ "quá xấu"):
+  - Hình tròn tối với icon SVG bong bóng chat (bỏ emoji); có góp ý thì giãn thành pill `n góp ý · k mới`.
+  - Bấm mở menu tối: Góp ý trang này (kèm số), Thêm góp ý (C), Tất cả trang, Đã xong, Ẩn nút (⌥C), dòng gợi ý kéo đổi góc. Bấm ra ngoài hoặc Esc thì đóng.
+  - Kéo (di chuyển hơn 6px, dùng pointer capture) rồi thả: hút vào góc gần nhất theo góc phần tư, lưu `sp_corner`. Menu mở về phía giữa màn hình; thông báo và bảng góp ý đi theo phía của nút.
+  - Trạng thái ẩn là icon nhỏ, mờ ở cùng góc, thay cho chấm xám; bỏ nút "–" khi rê chuột.
+  - Đã thử thật kèm ảnh chụp: pill "2 góp ý", menu, kéo sang góc trên trái (lưu sau khi tải lại, cú click cuối lúc kéo không mở menu), bảng góp ý mở bên trái, menu xổ xuống, trạng thái ẩn rồi hiện lại, Esc và bấm ra ngoài đóng menu. Test 111/111.
 

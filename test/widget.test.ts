@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Window } from 'happy-dom'
 // @ts-expect-error plain JS module served as-is to the browser
-import { areaRect, badgeTitle, belowViewport, isCommentShortcut, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
+import { areaRect, badgeTitle, belowViewport, isCommentShortcut, launcherLabel, nearestCorner, isToggleFabShortcut, pinVisibleUnderModal, widgetParent, countCloned, keepInCapture, cssPath, describe, describeArea, enclosing, findAnchor, h, nodes, pageBackground, pageKey, resolvedSince, seenKey, stripBadge, unseenResolved } from '../widget/widget.js'
 
 function page(html: string) {
   const win = new Window({ url: 'http://localhost/' })
@@ -245,4 +245,20 @@ test('⌥/Alt+C toggles the floating button; plain C still means "comment"', () 
   assert.equal(isToggleFabShortcut(key({}, doc.querySelector('#i')!)), false, 'not while typing')
   assert.equal(isToggleFabShortcut(key({ metaKey: true })), false)
   assert.equal(isToggleFabShortcut(key({ repeat: true })), false)
+})
+
+// Launcher in the style of the Next.js dev-tools indicator: a pill you can drag to any corner.
+test('nearestCorner: the quadrant of the release point', () => {
+  assert.equal(nearestCorner(10, 10, 1000, 800), 'tl')
+  assert.equal(nearestCorner(990, 10, 1000, 800), 'tr')
+  assert.equal(nearestCorner(10, 790, 1000, 800), 'bl')
+  assert.equal(nearestCorner(990, 790, 1000, 800), 'br')
+  assert.equal(nearestCorner(500, 400, 1000, 800), 'br', 'dead centre goes to the default corner')
+})
+
+test('launcherLabel: like "1 Issue · 1 Insight", empty when nothing to report', () => {
+  assert.equal(launcherLabel(0, 0), '')
+  assert.equal(launcherLabel(3, 0), '3 góp ý')
+  assert.equal(launcherLabel(3, 1), '3 góp ý · 1 mới')
+  assert.equal(launcherLabel(0, 2), '2 mới')
 })

@@ -9,8 +9,13 @@ const T = {
   title: 'Góp ý',
   fabTitle: 'Góp ý · nhấn C ở bất kỳ đâu để góp ý nhanh',
   hideFab: 'Ẩn nút',
+  menuPage: 'Góp ý trang này',
+  menuAdd: 'Thêm góp ý',
+  menuAll: 'Tất cả trang',
+  menuResolved: 'Đã xong',
+  menuDragHint: 'Kéo nút để đổi sang góc khác',
   showFab: 'Hiện nút góp ý (⌥/Alt+C)',
-  fabHiddenInfo: 'Đã ẩn nút góp ý. Bấm chấm nhỏ ở góc phải dưới hoặc ⌥/Alt+C để hiện lại. Phím C vẫn dùng để góp ý.',
+  fabHiddenInfo: 'Đã thu nhỏ nút góp ý. Bấm biểu tượng mờ ở góc hoặc ⌥/Alt+C để hiện lại. Phím C vẫn dùng để góp ý.',
   add: '+ Thêm góp ý (C)',
   cancelPick: 'Hủy chọn (Esc)',
   hint: 'Click vào phần tử, hoặc kéo chuột để khoanh vùng · Esc để thoát',
@@ -209,6 +214,24 @@ export function widgetParent(doc) {
 /** With a modal open, elements behind its backdrop get no pins (they would float over the dialog). */
 export const pinVisibleUnderModal = (anchor, modal) => !modal || modal.contains(anchor)
 
+// ---- launcher (Next.js dev-tools style pill, draggable to a corner) ----
+// Trusted constant markup (never user data): speech bubble with a plus, or a cross while picking.
+const LOGO_SVG = {
+  comment: '<path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L3.5 20l1.4-4.9A8 8 0 1 1 20.5 11.5z"/><path d="M12 8v7M8.5 11.5h7"/>',
+  cancel: '<path d="M6 6l12 12M18 6L6 18"/>',
+}
+function logo(cancel) {
+  const span = document.createElement('span')
+  span.className = 'logo'
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${cancel ? LOGO_SVG.cancel : LOGO_SVG.comment}</svg>`
+  return span
+}
+/** Corner for a drop at (x, y): the quadrant it falls in; the exact centre keeps the default (bottom-right). */
+export const nearestCorner = (x, y, w, h) => `${y < h / 2 ? 't' : 'b'}${x < w / 2 ? 'l' : 'r'}`
+/** Pill text, like Next's "1 Issue · 1 Insight": open comments on this page and your newly resolved ones. */
+export const launcherLabel = (open, fresh) =>
+  [open > 0 && `${open} góp ý`, fresh > 0 && `${fresh} mới`].filter(Boolean).join(' · ')
+
 // ---- "your comment was handled" ----
 /** My threads that went open → resolved since the previous load (`prev`: id → status at that load). */
 export const resolvedSince = (prev, threads) => threads.filter((t) => t.mine && t.status === 'resolved' && prev.get(t.id) === 'open')
@@ -256,25 +279,47 @@ button.primary, button.primary * { background: #2563eb; border-color: #2563eb; c
 button.primary:hover { background: #1d4ed8; }
 textarea, input { width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px 8px; resize: vertical; background: #fff; }
 textarea:focus, input:focus { outline: 2px solid #2563eb; outline-offset: -1px; }
-.fab { position: fixed; right: 16px; bottom: 16px; height: 40px; min-width: 40px; border-radius: 20px; border: none;
-  background: #111827; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 16px; pointer-events: auto; }
-.fab, .fab * { color: #fff; } .fab:hover { background: #1f2937; } .fab.picking { background: #2563eb; }
-.fab.mini { min-width: 0; width: 14px; height: 14px; padding: 0; right: 6px; bottom: 6px; opacity: .45; box-shadow: none; }
-.fab.mini:hover { opacity: 1; }
-.fab-hide { position: fixed; right: 50px; bottom: 44px; width: 20px; height: 20px; padding: 0; border-radius: 10px; line-height: 1;
-  background: #fff; border: 1px solid #d0d7de; font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .15s; }
-.fab-hide.show { opacity: 1; pointer-events: auto; }
+.dock { position: fixed; display: flex; gap: 8px; pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.dock[data-corner^="b"] { bottom: 16px; flex-direction: column; } .dock[data-corner^="t"] { top: 16px; flex-direction: column-reverse; }
+.dock[data-corner$="r"] { right: 16px; align-items: flex-end; } .dock[data-corner$="l"] { left: 16px; align-items: flex-start; }
+.fab { position: relative; height: 40px; min-width: 40px; padding: 0 4px; border-radius: 20px; display: flex; align-items: center; gap: 4px;
+  background: #0a0a0a; border: 1px solid rgba(255,255,255,.16); box-shadow: 0 0 0 1px rgba(0,0,0,.55), 0 8px 24px rgba(0,0,0,.28);
+  cursor: grab; user-select: none; touch-action: none; transition: background .15s, opacity .15s; }
+.fab, .fab * { color: #fff; } .fab:hover { background: #171717; }
+.fab .logo { width: 30px; height: 30px; border-radius: 15px; display: grid; place-items: center; background: rgba(255,255,255,.12); }
+.fab .label { padding: 0 10px 0 4px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.fab.has-open { background: #1d4ed8; border-color: rgba(255,255,255,.28); } .fab.has-open:hover { background: #1e40af; }
+.fab.picking { background: #2563eb; }
+.dock.dragging .fab { cursor: grabbing; opacity: .9; }
+.fab.mini { height: 30px; min-width: 30px; padding: 0; opacity: .55; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.fab.mini .logo { width: 28px; height: 28px; background: none; } .fab.mini:hover { opacity: 1; }
+.menu { width: 264px; padding: 6px; background: #0a0a0a; border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.35); }
+.menu, .menu * { color: #ededed; }
+.menu .item { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px;
+  background: none; border: none; border-radius: 8px; font-size: 14px; text-align: left; }
+.menu .item:hover { background: rgba(255,255,255,.08); }
+.menu .muted, .menu .muted * { color: #a1a1a1; }
+.menu .chips { display: flex; gap: 4px; }
+.menu .chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; font-size: 12px; }
+.menu .dot { width: 7px; height: 7px; border-radius: 4px; }
+.menu kbd { padding: 1px 6px; border: 1px solid rgba(255,255,255,.18); border-radius: 4px; font: 11px ui-monospace, Menlo, monospace; color: #a1a1a1; }
+.menu hr { border: none; border-top: 1px solid rgba(255,255,255,.12); margin: 6px 0; }
+.menu .hint-line { padding: 4px 10px 2px; font-size: 11px; color: #737373; }
 header .link { margin-left: auto; margin-right: 6px; color: #57606a; font-size: 12px; }
-.fab.fresh::after { content: ''; position: absolute; top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 5px; background: #22c55e; border: 2px solid #111827; }
-.toast { position: fixed; right: 16px; bottom: 68px; max-width: 340px; display: flex; gap: 6px; align-items: flex-start; background: #fff;
+.fab.fresh::after { content: ''; position: absolute; top: 2px; left: 26px; width: 9px; height: 9px; border-radius: 5px; background: #22c55e; border: 2px solid #0a0a0a; }
+.toast[data-corner^="b"] { bottom: 68px; } .toast[data-corner^="t"] { top: 68px; }
+.toast[data-corner$="r"] { right: 16px; } .toast[data-corner$="l"] { left: 16px; }
+.toast { position: fixed; max-width: 340px; display: flex; gap: 6px; align-items: flex-start; background: #fff;
   border: 1px solid #d0d7de; border-left: 4px solid #1a7f37; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 10px; pointer-events: auto; }
 .toast-body { border: none; background: none; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 2px; }
 .toast-body:hover { background: none; } .toast .note { color: #57606a; font-size: 12px; }
 .fresh-badge { background: #1a7f37; color: #fff; border-radius: 10px; padding: 0 6px; font-size: 11px; font-weight: 600; }
 .fresh-count { color: #1a7f37; font-weight: 600; }
-.fab .count { background: #ef4444; border-radius: 10px; padding: 0 6px; font-size: 12px; font-weight: 600; }
 .panel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100vw; background: #fff; border-left: 1px solid #d0d7de;
   box-shadow: -8px 0 24px rgba(0,0,0,.12); display: flex; flex-direction: column; pointer-events: auto; }
+.panel.left { right: auto; left: 0; border-left: none; border-right: 1px solid #d0d7de; box-shadow: 8px 0 24px rgba(0,0,0,.12); }
 header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #eaeef2; }
 header strong { font-size: 15px; font-weight: 600; }
 .icon { border: none; font-size: 20px; line-height: 1; padding: 0 4px; background: none; }
@@ -346,7 +391,8 @@ function mount() {
     error: null,
     name: store.get('sp_author'),
     nameDraft: '',
-    fabHidden: store.get('sp_fab_hidden') === '1', // shrunk to a faint dot; tap it or ⌥/Alt+C to bring it back
+    fabHidden: store.get('sp_fab_hidden') === '1', // shrunk to a faint logo; tap it or ⌥/Alt+C to bring it back
+    corner: /^[tb][lr]$/.test(store.get('sp_corner')) ? store.get('sp_corner') : 'br', // where the launcher sits
   }
   const drafts = new Map() // thread id → unsent reply text, survives re-renders
   let lastJson = ''
@@ -366,26 +412,12 @@ function mount() {
   const hl = h('div', { class: 'hl', hidden: true })
   const hint = h('div', { class: 'hint', hidden: true }, T.hint)
   const panel = h('aside', { class: 'panel', hidden: true })
-  const fab = h('button', {
-    class: 'fab',
-    title: T.fabTitle,
-    onclick: () =>
-      state.picking ? setPicking(false) : state.fabHidden && !state.open ? setFabHidden(false) : ((state.open = true), render()),
-  })
-  // Small "–" on hover to shrink the button out of the way (mobile: "Ẩn nút" in the panel header).
-  const fabHide = h('button', { class: 'fab-hide', title: T.hideFab, 'aria-label': T.hideFab, onclick: () => setFabHidden(true) }, '–')
-  let fabHideTimer = 0
-  const showFabHide = (on) => {
-    clearTimeout(fabHideTimer)
-    if (on) fabHide.classList.add('show')
-    else fabHideTimer = setTimeout(() => fabHide.classList.remove('show'), 300)
-  }
-  for (const el of [fab, fabHide]) {
-    el.addEventListener('mouseenter', () => showFabHide(!state.fabHidden && !state.picking))
-    el.addEventListener('mouseleave', () => showFabHide(false))
-  }
+  // Launcher in the style of the Next.js dev-tools indicator: a pill in a corner (drag it to another), click = menu.
+  const fab = h('button', { class: 'fab', type: 'button', 'aria-haspopup': 'menu' })
+  const menu = h('div', { class: 'menu', role: 'menu', hidden: true })
+  const dock = h('div', { class: 'dock' }, menu, fab)
   const toast = h('div', { class: 'toast', hidden: true, role: 'status' })
-  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, toast, fab, fabHide)
+  root.append(h('style', {}, STYLES), pinLayer, hl, hint, panel, toast, dock)
 
   // Live in <body>, or inside the open modal <dialog> (top layer, rest of the page inert). React error recovery can
   // also replace <body>; the 1s tick re-checks.
@@ -404,10 +436,74 @@ function mount() {
   function setFabHidden(hidden) {
     state.fabHidden = hidden
     store.set('sp_fab_hidden', hidden ? '1' : '')
-    fabHide.classList.remove('show')
+    closeMenu()
     render()
     if (hidden) info(T.fabHiddenInfo)
   }
+
+  // ---- launcher: click opens the menu, drag snaps to the nearest corner ----
+  const closeMenu = () => (menu.hidden = true)
+  function openPanel({ scope = state.scope, filter = 'open' } = {}) {
+    closeMenu()
+    Object.assign(state, { open: true, filter })
+    if (scope !== state.scope) setScope(scope)
+    else render()
+  }
+  function renderMenu() {
+    const openHere = state.threads.filter((t) => t.status === 'open' && t.url === state.url).length
+    const openAll = state.threads.filter((t) => t.status === 'open').length
+    const doneHere = state.threads.filter((t) => t.status === 'resolved' && t.url === state.url).length
+    const fresh = seen ? unseenResolved(state.threads, seen).length : 0
+    const item = (label, right, onclick) => h('button', { class: 'item', role: 'menuitem', type: 'button', onclick }, h('span', {}, label), right)
+    const chip = (n, color) => h('span', { class: 'chip' }, h('span', { class: 'dot', style: `background:${color}` }), n)
+    menu.replaceChildren(
+      item(T.menuPage, h('span', { class: 'chips' }, chip(openHere, '#3b82f6'), fresh > 0 && chip(fresh, '#22c55e')), () => openPanel({ scope: 'page' })),
+      item(T.menuAdd, h('kbd', {}, 'C'), () => (closeMenu(), setPicking(true))),
+      item(T.menuAll, h('span', { class: 'muted' }, `${openAll} ›`), () => openPanel({ scope: 'all' })),
+      item(T.menuResolved, h('span', { class: 'muted' }, doneHere), () => openPanel({ scope: 'page', filter: 'resolved' })),
+      h('hr'),
+      item(T.hideFab, h('kbd', {}, '⌥C'), () => setFabHidden(true)),
+      h('p', { class: 'hint-line' }, T.menuDragHint),
+    )
+  }
+  function onFabClick() {
+    if (state.picking) return setPicking(false)
+    if (state.fabHidden) return setFabHidden(false)
+    menu.hidden = !menu.hidden
+    if (!menu.hidden) renderMenu()
+  }
+  function setCorner(corner) {
+    state.corner = corner
+    store.set('sp_corner', corner)
+    dock.style.cssText = '' // drop the drag position: the corner class places it
+    render()
+  }
+  let press = null
+  let dragged = false
+  fab.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    press = { x: e.clientX, y: e.clientY, id: e.pointerId }
+    dragged = false
+  })
+  fab.addEventListener('pointermove', (e) => {
+    if (!press || (!dragged && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6)) return
+    if (!dragged) {
+      dragged = true
+      try {
+        fab.setPointerCapture(press.id) // keep receiving moves outside the button; throws if the pointer is gone
+      } catch {}
+      closeMenu()
+    }
+    Object.assign(dock.style, { left: `${e.clientX - 20}px`, top: `${e.clientY - 20}px`, right: 'auto', bottom: 'auto' })
+    dock.classList.add('dragging')
+  })
+  fab.addEventListener('pointerup', (e) => {
+    if (dragged) (dock.classList.remove('dragging'), setCorner(nearestCorner(e.clientX, e.clientY, innerWidth, innerHeight)))
+    press = null
+  })
+  fab.addEventListener('click', () => (dragged ? (dragged = false) : onFabClick()))
+  // Outside click closes the menu (our own UI excluded).
+  addEventListener('pointerdown', (e) => menu.hidden || e.composedPath().includes(dock) || closeMenu(), true)
 
   const pickStyle = document.createElement('style')
   pickStyle.textContent = '* { cursor: crosshair !important; }'
@@ -641,6 +737,7 @@ function mount() {
   addEventListener(
     'keydown',
     (e) => {
+      if (e.key === 'Escape' && !menu.hidden) return closeMenu()
       if (e.key === 'Escape' && (composer || state.picking)) return composer ? closeComposer() : setPicking(false)
       if (composer) return // half-written comment: C must not throw it away
       {
@@ -791,16 +888,17 @@ function mount() {
     const unseen = seen ? unseenResolved(state.threads, seen) : [] // every page: they are the reviewer's own
 
     // While picking, the panel steps aside so every element is clickable; the fab becomes "cancel".
-    fab.hidden = state.open && !state.picking
-    fab.title = state.picking ? T.cancelPick : T.fabTitle
-    fab.classList.toggle('picking', state.picking)
-    fab.classList.toggle('fresh', unseen.length > 0 && !state.picking)
+    dock.hidden = state.open && !state.picking
+    dock.dataset.corner = toast.dataset.corner = state.corner
+    panel.classList.toggle('left', state.corner.endsWith('l')) // the panel opens on the launcher's side
     const mini = state.fabHidden && !state.picking
-    fab.classList.toggle('mini', mini)
-    fab.title = mini ? T.showFab : fab.title
-    fab.replaceChildren(
-      ...(state.picking ? ['✕'] : mini ? [] : nodes('💬', openHere.length > 0 && h('span', { class: 'count' }, openHere.length))),
-    )
+    const label = state.picking ? T.cancelPick : mini ? '' : launcherLabel(openHere.length, unseen.length)
+    fab.className = ['fab', mini && 'mini', state.picking && 'picking', !mini && !state.picking && openHere.length > 0 && 'has-open', !state.picking && unseen.length > 0 && 'fresh']
+      .filter(Boolean)
+      .join(' ')
+    fab.title = mini ? T.showFab : state.picking ? T.cancelPick : T.fabTitle
+    fab.replaceChildren(...nodes(logo(state.picking), label && h('span', { class: 'label' }, label)))
+    if (!menu.hidden) renderMenu()
 
     pins = openHere.map((t, i) => ({
       t,

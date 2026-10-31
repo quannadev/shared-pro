@@ -130,10 +130,10 @@ Share link luôn là `https://review.example.com/qtw-project-manager?sp=…`. Na
 ## Hướng dẫn cho người review
 
 1. Mở share link **ngay trong trình duyệt sẽ dùng để góp ý** (Safari, Chrome…). Trình duyệt nhận cookie từ token trong link. `?sp=…` vẫn nằm trên thanh địa chỉ, nên copy URL hoặc bấm "Mở trong Safari" từ Zalo/Messenger vẫn mang theo mã.
-2. Bấm nút **💬** ở góc phải dưới để mở bảng góp ý. Nút luôn nằm trên cùng, kể cả khi app mở popup:
+2. Nút góp ý nằm ở góc màn hình, giống nút dev tools của Next.js. Có góp ý thì nó giãn thành dạng *"2 góp ý · 1 mới"*. **Bấm** để mở menu (Góp ý trang này, Thêm góp ý, Tất cả trang, Đã xong, Ẩn nút). **Kéo** sang góc nào cũng được: thả ra là nút tự hút vào góc gần nhất, vị trí được nhớ, và bảng góp ý mở cùng phía với nút. Nút luôn nằm trên cùng, kể cả khi app mở popup:
    - Với `<dialog>` mở bằng `showModal()`, widget chuyển vào trong popup để vẫn bấm và góp ý được. Lúc đó chỉ hiện pin của phần tử trong popup.
    - Popup có `transform` thì nút bám theo khung popup thay vì góc màn hình.
-   - Muốn nút khỏi che nội dung: rê chuột vào 💬 rồi bấm **–**, hoặc bấm **Ẩn nút** trong bảng, hoặc nhấn **⌥/Alt+C**. Nút thu thành một chấm mờ ở góc; bấm chấm hoặc nhấn ⌥/Alt+C lần nữa để hiện lại. Trạng thái được nhớ sau khi tải lại trang.
+   - Muốn nút khỏi che nội dung: chọn **Ẩn nút** trong menu (hoặc trong bảng góp ý), hoặc nhấn **⌥/Alt+C**. Nút thu thành một biểu tượng nhỏ, mờ ở đúng góc đó; bấm vào hoặc nhấn ⌥/Alt+C lần nữa để hiện lại. Trạng thái được nhớ sau khi tải lại trang.
 3. Nhấn phím **C** ở bất kỳ đâu trên trang (không cần mở bảng góp ý), hoặc bấm **+ Thêm góp ý**. Bắt đầu bằng **C** khi bảng đang đóng thì gửi xong bảng vẫn đóng, pin mới hiện trên trang là xác nhận. Nhấn **C** lần nữa hoặc **Esc** để thôi. Có hai cách chọn:
    - **Click** vào một phần tử. Phần tử dưới chuột được viền xanh.
    - **Kéo chuột** để khoanh một vùng, dùng khi góp ý về khoảng cách hay một cụm phần tử. Chỉ hỗ trợ chuột; trên điện thoại thì chạm để chọn phần tử.
